@@ -18,3 +18,4 @@ mcp-solution/reports/*.md
 Python312/
 __pycache__/
 *.pyc
+external/
