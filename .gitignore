@@ -6,6 +6,9 @@ pw-browsers/
 tmp/
 screenshots/
 browser-profile/
+mcp-browser-profile/
+mcp-output/
+.playwright-mcp/
 Python312/
 __pycache__/
 *.pyc
