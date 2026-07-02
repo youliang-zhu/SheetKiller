@@ -19,3 +19,11 @@ Python312/
 __pycache__/
 *.pyc
 external/
+dynamic-fill-solution/node_modules/
+dynamic-fill-solution/.output/
+dynamic-fill-solution/.wxt/
+dynamic-fill-solution/.manual-browser-profile/
+dynamic-fill-solution/reports/
+!dynamic-fill-solution/reports/
+dynamic-fill-solution/reports/*
+!dynamic-fill-solution/reports/.gitkeep

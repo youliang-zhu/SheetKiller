@@ -1,0 +1,362 @@
+[
+  {
+    "index": 0,
+    "labelIncludes": "姓名",
+    "value": "朱有亮",
+    "strategy": "text"
+  },
+  {
+    "index": 6,
+    "labelIncludes": "联系电话",
+    "value": "13925188297",
+    "strategy": "text"
+  },
+  {
+    "index": 7,
+    "labelIncludes": "电子邮箱",
+    "value": "youliang.zhu@epfl.ch",
+    "strategy": "text"
+  },
+  {
+    "index": 9,
+    "labelIncludes": "籍贯",
+    "value": "湖南省 娄底市",
+    "strategy": "cascader-region"
+  },
+  {
+    "index": 15,
+    "labelIncludes": "学校名称",
+    "value": "洛桑联邦理工学院",
+    "strategy": "text"
+  },
+  {
+    "index": 16,
+    "labelIncludes": "所在院系",
+    "value": "计算机科学",
+    "strategy": "text"
+  },
+  {
+    "index": 20,
+    "labelIncludes": "学历",
+    "value": "硕士研究生",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 22,
+    "labelIncludes": "起始时间",
+    "value": "2025-09",
+    "strategy": "date"
+  },
+  {
+    "index": 24,
+    "labelIncludes": "结束时间",
+    "value": "2026-06",
+    "strategy": "date"
+  },
+  {
+    "index": 25,
+    "labelIncludes": "受教育类型",
+    "value": "全日制",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 26,
+    "labelIncludes": "交流学习",
+    "value": "是",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 27,
+    "labelIncludes": "联合办学",
+    "value": "否",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 28,
+    "labelIncludes": "专业类别",
+    "value": "计算机类",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 29,
+    "labelIncludes": "专业",
+    "value": "计算机科学",
+    "strategy": "text"
+  },
+  {
+    "index": 33,
+    "labelIncludes": "学校名称",
+    "value": "查尔姆斯理工大学",
+    "strategy": "text"
+  },
+  {
+    "index": 34,
+    "labelIncludes": "所在院系",
+    "value": "人工智能",
+    "strategy": "text"
+  },
+  {
+    "index": 38,
+    "labelIncludes": "学历",
+    "value": "硕士研究生",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 40,
+    "labelIncludes": "起始时间",
+    "value": "2024-09",
+    "strategy": "date"
+  },
+  {
+    "index": 42,
+    "labelIncludes": "结束时间",
+    "value": "2025-06",
+    "strategy": "date"
+  },
+  {
+    "index": 43,
+    "labelIncludes": "受教育类型",
+    "value": "全日制",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 44,
+    "labelIncludes": "交流学习",
+    "value": "否",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 45,
+    "labelIncludes": "联合办学",
+    "value": "否",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 46,
+    "labelIncludes": "专业类别",
+    "value": "计算机类",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 47,
+    "labelIncludes": "专业",
+    "value": "人工智能",
+    "strategy": "text"
+  },
+  {
+    "index": 49,
+    "labelIncludes": "GPA",
+    "value": "4.1/5.0",
+    "strategy": "text"
+  },
+  {
+    "index": 51,
+    "labelIncludes": "学校名称",
+    "value": "中山大学",
+    "strategy": "text"
+  },
+  {
+    "index": 52,
+    "labelIncludes": "所在院系",
+    "value": "工学",
+    "strategy": "text"
+  },
+  {
+    "index": 56,
+    "labelIncludes": "学历",
+    "value": "本科",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 58,
+    "labelIncludes": "起始时间",
+    "value": "2020-09",
+    "strategy": "date"
+  },
+  {
+    "index": 60,
+    "labelIncludes": "结束时间",
+    "value": "2024-06",
+    "strategy": "date"
+  },
+  {
+    "index": 61,
+    "labelIncludes": "受教育类型",
+    "value": "全日制",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 62,
+    "labelIncludes": "交流学习",
+    "value": "否",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 63,
+    "labelIncludes": "联合办学",
+    "value": "否",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 64,
+    "labelIncludes": "专业类别",
+    "value": "计算机类",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 65,
+    "labelIncludes": "专业",
+    "value": "工学",
+    "strategy": "text"
+  },
+  {
+    "index": 67,
+    "labelIncludes": "GPA",
+    "value": "85/100",
+    "strategy": "text"
+  },
+  {
+    "index": 69,
+    "labelIncludes": "公司名称",
+    "value": "沃尔沃集团",
+    "strategy": "text"
+  },
+  {
+    "index": 71,
+    "labelIncludes": "起始时间",
+    "value": "2025-04",
+    "strategy": "date"
+  },
+  {
+    "index": 73,
+    "labelIncludes": "结束时间",
+    "value": "2025-08",
+    "strategy": "date"
+  },
+  {
+    "index": 75,
+    "labelIncludes": "担任岗位",
+    "value": "LLM 应用开发实习生",
+    "strategy": "text"
+  },
+  {
+    "index": 76,
+    "labelIncludes": "工作职责",
+    "value": "构建基于 LangGraph 的卡车测试脚本生成 LLM pipeline，集成 RAG、PostgreSQL 向量存储、OpenTelemetry tracing 与自动化评估。",
+    "strategy": "textarea"
+  },
+  {
+    "index": 77,
+    "labelIncludes": "项目名称",
+    "value": "对话 Agent Memory 时间推理研究",
+    "strategy": "text"
+  },
+  {
+    "index": 79,
+    "labelIncludes": "起始时间",
+    "value": "2025-12",
+    "strategy": "date"
+  },
+  {
+    "index": 81,
+    "labelIncludes": "结束时间",
+    "value": "2026-05",
+    "strategy": "date"
+  },
+  {
+    "index": 82,
+    "labelIncludes": "项目角色",
+    "value": "RS3Lab 研究助理",
+    "strategy": "text"
+  },
+  {
+    "index": 83,
+    "labelIncludes": "项目职责",
+    "value": "构建 NanoMem 对话 Agent memory 框架，集成 SQLite 存储与 Planner-Retriever-Synthesizer 工作流；基于 Locomo 和 LongMemEval 构建数据管线，并使用 VeRL 与 SGLang 进行 GRPO Agentic RL 训练。论文投稿至 NeurIPS 2026。",
+    "strategy": "textarea"
+  },
+  {
+    "index": 84,
+    "labelIncludes": "项目名称",
+    "value": "Apertus-V2 大语言模型预训练",
+    "strategy": "text"
+  },
+  {
+    "index": 86,
+    "labelIncludes": "起始时间",
+    "value": "2026-02",
+    "strategy": "date"
+  },
+  {
+    "index": 88,
+    "labelIncludes": "结束时间",
+    "value": "至今",
+    "strategy": "text"
+  },
+  {
+    "index": 89,
+    "labelIncludes": "项目角色",
+    "value": "Swiss AI",
+    "strategy": "text"
+  },
+  {
+    "index": 90,
+    "labelIncludes": "项目职责",
+    "value": "基于 Megatron-LM 在 ALPS 上复现 DeepSeek-V3 700B 训练流程；使用 NSYS 分析多 rank trace，定位 GPU 计算利用率瓶颈；通过提升 micro-batch size 将 GPU idle 从 67% 降至 14%，吞吐提升 53%。",
+    "strategy": "textarea"
+  },
+  {
+    "index": 91,
+    "labelIncludes": "项目名称",
+    "value": "GUI Agent 智能手机助手研究",
+    "strategy": "text"
+  },
+  {
+    "index": 93,
+    "labelIncludes": "起始时间",
+    "value": "2025-08",
+    "strategy": "date"
+  },
+  {
+    "index": 95,
+    "labelIncludes": "结束时间",
+    "value": "2026-02",
+    "strategy": "date"
+  },
+  {
+    "index": 96,
+    "labelIncludes": "项目角色",
+    "value": "RS3Lab 研究助理",
+    "strategy": "text"
+  },
+  {
+    "index": 97,
+    "labelIncludes": "项目职责",
+    "value": "开发面向手机任务自动执行的 GUI Agent，整合多模态数据采集、标注与 LoRA 微调；使用 SFT 和 GRPO 训练 Qwen2.5-VL，使任务完成率优于通用多模态大模型。",
+    "strategy": "textarea"
+  },
+  {
+    "index": 111,
+    "labelIncludes": "语种",
+    "value": "英语",
+    "strategy": "custom-select"
+  },
+  {
+    "index": 112,
+    "labelIncludes": "论文名称",
+    "value": "NanoMem: Iterative Evidence Synthesis for Temporal-Causal Reasoning in Agent Memory",
+    "strategy": "text"
+  },
+  {
+    "index": 114,
+    "labelIncludes": "发表时间",
+    "value": "2026",
+    "strategy": "date"
+  },
+  {
+    "index": 115,
+    "labelIncludes": "论文详情",
+    "value": "Yueyang Pan*, Youliang Zhu*, and Sanidhya Kashyap. Submitted to NeurIPS 2026. *Co-first author.",
+    "strategy": "textarea"
+  }
+]
