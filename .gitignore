@@ -6,9 +6,15 @@ pw-browsers/
 tmp/
 screenshots/
 browser-profile/
-mcp-browser-profile/
-mcp-output/
+browser-use-solution/browser-profile/
+mcp-solution/browser-profile/
+mcp-solution/output/
 .playwright-mcp/
+mcp-solution/mappings/*.json
+!mcp-solution/mappings/.gitkeep
+mcp-solution/reports/*.json
+mcp-solution/reports/*.md
+!mcp-solution/reports/.gitkeep
 Python312/
 __pycache__/
 *.pyc

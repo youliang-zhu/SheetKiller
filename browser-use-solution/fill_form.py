@@ -20,7 +20,7 @@ from browser_use import Agent, BrowserProfile, ChatOpenAI
 from dotenv import load_dotenv
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(PROJECT_ROOT / "pw-browsers"))
 os.environ.setdefault("TEMP", str(PROJECT_ROOT / "tmp"))
@@ -32,7 +32,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 # ------------------ 只需要改这两行 ------------------
 TARGET_URL = "https://iflytek.zhiye.com/form?fromPage=job&jobAdId=6dfa1f52-ca9d-447f-a950-496d228cc1b0&userId=199984273"
 PROFILE_PATH = PROJECT_ROOT / "data" / "profile.json"
-BROWSER_PROFILE_DIR = PROJECT_ROOT / "browser-profile"
+BROWSER_PROFILE_DIR = PROJECT_ROOT / "browser-use-solution" / "browser-profile"
 CHROME_PATH = (
     PROJECT_ROOT
     / "pw-browsers"

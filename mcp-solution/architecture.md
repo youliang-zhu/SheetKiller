@@ -81,13 +81,13 @@ one source of browser truth
 Recommended local profile path:
 
 ```text
-D:\ToolProjectCode\SheetKiller\mcp-browser-profile
+D:\ToolProjectCode\SheetKiller\mcp-solution\browser-profile
 ```
 
 Recommended output path:
 
 ```text
-D:\ToolProjectCode\SheetKiller\mcp-output
+D:\ToolProjectCode\SheetKiller\mcp-solution\output
 ```
 
 There are two acceptable operating modes:
@@ -118,7 +118,7 @@ Implementation invariants:
 {
   "browser_session": {
     "mode": "shared_persistent_profile",
-    "user_data_dir": "D:\\ToolProjectCode\\SheetKiller\\mcp-browser-profile"
+    "user_data_dir": "D:\\ToolProjectCode\\SheetKiller\\mcp-solution\\browser-profile"
   }
 }
 ```
