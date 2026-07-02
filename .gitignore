@@ -1,0 +1,11 @@
+.env
+data/
+venv/
+pipcache/
+pw-browsers/
+tmp/
+screenshots/
+browser-profile/
+Python312/
+__pycache__/
+*.pyc
