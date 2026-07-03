@@ -710,3 +710,334 @@ npm run build
 - 不在真实表单上做无人监督提交。
 
 这个计划的核心判断是：SheetKiller 的竞争力不是“能自动点网页”，而是“能把本地资料可靠、可验证、可回滚地填成一版草稿，并把最后决定权留给用户”。
+
+## 14. SheetKiller v2: scan-first AI plan 工作流
+
+### 14.1 背景
+
+当前 `manual:probe` 模式已经证明了执行器路线是可行的：
+
+```text
+打开真实网页
+  -> scan 页面字段
+  -> 读取 manual-plan.example.json
+  -> 按 index / label / strategy 填写
+  -> verifier 回读结果
+```
+
+这个模式稳定、可调试、成本低，但缺点也很明显：`manual-plan.example.json` 需要提前维护。不同招聘系统的字段顺序、选项文案、学校/专业库、日期控件和级联控件都不一样，导致每个新站点都可能要手工修 plan。
+
+v2 的核心目标是把主流程改成：
+
+```text
+scan 当前页面
+  -> AI 结合 scan 结果和用户资料生成当前页面专属 fill plan
+  -> 用户预览 / 可编辑
+  -> fill
+  -> verify
+  -> report
+```
+
+也就是说，AI 不直接操作网页。AI 只负责生成计划，执行仍由本地确定性 executor 完成。
+
+### 14.2 产品定位
+
+v2 以后有两种资料入口：
+
+1. **手动上传 JSON**
+   - 保留现有能力。
+   - 适合调试、复现、离线使用、无 API 场景。
+   - 也适合作为高级用户直接编辑 profile 的入口。
+
+2. **AI 帮忙完善资料**
+   - 用户上传 `cv.md`、PDF、docx，或粘贴简历文本。
+   - AI 把简历解析成结构化 profile draft。
+   - 展示新增、修改、不确定字段。
+   - 用户确认后合并到本地 profile。
+
+资料准备完成后，v2 的填表主入口不再要求用户手写 plan，而是：
+
+```text
+当前网页 scan
+  + 本地 profile
+  + 当前站点历史记忆
+  -> AI 生成 page-specific fill plan
+```
+
+### 14.3 v2 主流程
+
+推荐主流程：
+
+```text
+1. 用户打开目标网申页面
+2. 用户完成登录、验证码、必要的人机验证
+3. SheetKiller scan 当前页面
+4. 系统把 FieldInventory 发给 planner
+5. planner 结合 profile 生成 FillPlan
+6. 用户查看计划摘要
+7. 用户点击 fill draft
+8. executor 执行填写
+9. verifier 逐项回读 expected vs actual
+10. report 输出 filled / mismatch / skipped / failed
+11. 用户人工复核和最终提交
+```
+
+注意：最终提交仍然必须由用户手动完成。
+
+### 14.4 AI planner 输入
+
+Planner 输入应该包含三类信息：
+
+#### A. 当前页面 scan 结果
+
+字段至少包括：
+
+```ts
+type FieldInventoryItem = {
+  index: number
+  type: 'text' | 'textarea' | 'custom-select' | 'cascader-region' | 'radio' | 'checkbox' | 'date' | 'file' | 'unknown'
+  label: string
+  context: string
+  placeholder: string
+  value: string
+  options?: string[]
+  disabled?: boolean
+  readOnly?: boolean
+  sensitive?: string
+}
+```
+
+v2 需要特别增强 `options`：
+
+- 对普通 select 直接读 option。
+- 对 Element / Ant Design 下拉，点击展开后读 visible options。
+- 对远程搜索学校/专业库，支持 debug/search 采样候选。
+- 对依赖字段，planner 可以标记 `dependsOn`。
+
+#### B. 本地 profile
+
+Profile 是用户确认过的结构化资料，例如：
+
+```ts
+type Profile = {
+  basic: {
+    name: string
+    gender: string
+    idType: string
+    idNumber: string
+    birthDate: string
+    phone: string
+    email: string
+    nationality: string
+    hometown: string[]
+  }
+  education: EducationItem[]
+  work: WorkItem[]
+  projects: ProjectItem[]
+  publications: PublicationItem[]
+  skills: string[]
+}
+```
+
+当前用户已经明确表示 v2 不需要优先考虑敏感值隔离，所以 planner 可以直接基于完整资料生成计划。不过仍然建议在 UI 上提示：如果使用云端模型，资料内容会发送给所选 AI provider。
+
+#### C. 站点上下文和历史记忆
+
+可以包括：
+
+- 当前域名
+- 页面 URL pattern
+- 之前保存过的该站点 fill plan
+- 用户手动修正记录
+- 上一次 verifier mismatch 结果
+
+这部分用于减少重复 token 消耗，也让同一个站点越用越准。
+
+### 14.5 AI planner 输出
+
+Planner 输出 `FillPlanItem[]`：
+
+```ts
+type FillPlanItem = {
+  index: number
+  label: string
+  strategy: 'text' | 'textarea' | 'custom-select' | 'cascader-region' | 'radio' | 'checkbox' | 'date'
+  value: string
+  sourcePath?: string
+  confidence: number
+  reason?: string
+  searchValues?: string[]
+  acceptValues?: string[]
+  allowFreeText?: boolean
+  dependsOn?: number[]
+  reviewRequired?: boolean
+}
+```
+
+重点字段：
+
+- `index`：绑定当前 scan 字段。
+- `strategy`：告诉 executor 如何填。
+- `value`：最终要填的值。
+- `searchValues`：用于学校、专业、地区等远程搜索控件。
+- `acceptValues`：允许 verifier 接受的页面显示值。
+- `dependsOn`：用于专业依赖专业类别、城市依赖省份等场景。
+- `confidence`：低置信字段不自动填，或要求人工确认。
+- `reviewRequired`：对开放题、生成类内容、歧义项强制人工复核。
+
+### 14.6 页面专属 plan 缓存
+
+每个站点第一次使用 AI 生成 plan，之后缓存：
+
+```text
+saved-pages/
+  oppo-careers-resume.plan.json
+  iflytek-zhiye-form.plan.json
+```
+
+缓存键建议由以下信息组成：
+
+- hostname
+- pathname pattern
+- 表单字段 signature
+- profile version
+
+如果页面字段 signature 没变，则直接复用 plan；如果字段变了，则提示重新生成。
+
+### 14.7 预览和人工确认
+
+AI plan 生成后不要直接 fill，先展示摘要：
+
+```text
+将填写 42 项
+跳过 8 项
+低置信 3 项
+需要人工确认 2 项
+```
+
+每个字段展示：
+
+```text
+页面字段：学校名称
+计划填写：Chalmers University of Technology
+资料来源：education[1].school
+置信度：0.94
+策略：custom-select
+```
+
+用户可以：
+
+- 修改 value
+- 修改 strategy
+- 禁用某一项
+- 保存修正到站点记忆
+- 确认执行 fill
+
+### 14.8 和现有 manual plan 的关系
+
+`manual-plan.example.json` 不废弃，降级为：
+
+- 调试模式
+- 无 API 模式
+- 站点 plan 的导入/导出格式
+- AI plan 的可编辑结果格式
+
+也就是说，v2 生成的 plan 应该仍然能被当前 `manual:probe fill` 执行。
+
+这样可以保证架构连续：
+
+```text
+v1 manual plan executor
+  -> v2 AI generated plan
+  -> 同一个 executor
+```
+
+### 14.9 实施阶段建议
+
+#### Phase V2-0: 保留现状并冻结 executor 行为
+
+目标：
+
+- 当前 `manual:probe` 继续可用。
+- 当前 `manual-plan.example.json` 继续可执行。
+- 把报告里的 `options`、`reason`、`actual` 保持稳定。
+
+通过标准：
+
+- OPPO / 讯飞等真实页面手动 plan 仍能跑。
+- `npm test` 通过。
+
+#### Phase V2-1: AI 完善资料
+
+目标：
+
+- 在资料编辑 UI 里新增“AI 帮忙完善资料”入口。
+- 支持粘贴简历文本或上传简历文件。
+- 调用 OpenAI-compatible API 生成 profile draft。
+- 展示 diff。
+- 用户确认后合并到本地 profile。
+
+这一步不碰网页 fill，只优化资料准备。
+
+#### Phase V2-2: Scan -> AI Plan
+
+目标：
+
+- 用户在真实页面点击“AI 生成填写方案”。
+- content script scan 当前页面。
+- planner 基于 scan + profile 生成 FillPlan。
+- dashboard/popup 展示 plan review。
+
+通过标准：
+
+- 不填网页也能生成 plan。
+- plan 能导出 JSON。
+- manual:probe 能读取该 JSON 并执行。
+
+#### Phase V2-3: Plan Review -> Fill
+
+目标：
+
+- 用户确认 plan 后，由 executor 填写。
+- verifier 生成报告。
+- mismatch 可反馈给 planner 或保存为站点修正。
+
+通过标准：
+
+- 同一页面第二次可以复用缓存 plan。
+- 用户修正过的字段下次优先采用用户修正。
+
+#### Phase V2-4: 站点记忆和自我修正
+
+目标：
+
+- 记录某站点字段和 profile source 的映射。
+- 记录用户对 plan 的修改。
+- 记录 executor 失败原因，例如 `option not found`、`field disabled`、`readback mismatch`。
+- 下次生成 plan 时把这些历史作为上下文。
+
+### 14.10 风险和边界
+
+主要风险：
+
+| 风险 | 处理 |
+|---|---|
+| AI 错配字段 | plan review + confidence + verifier |
+| 学校/专业远程搜索库候选不可见 | debug options + searchValues + acceptValues |
+| 页面字段 index 漂移 | 使用 field signature 辅助匹配 |
+| 依赖字段未解锁 | FillPlanItem.dependsOn + 每项执行前重新 scan |
+| 开放题生成内容不可靠 | 默认 reviewRequired，不自动提交 |
+| 同站点多页面表单 | 每页独立 scan/plan/cache |
+
+### 14.11 v2 的核心判断
+
+v2 不应该变成一个慢速“网页 agent”。它应该是：
+
+```text
+AI 负责理解和规划
+本地 executor 负责确定性执行
+verifier 负责纠错
+用户负责最终确认
+```
+
+这个形态比纯 agent 快，比纯规则泛化能力强，也比预写 manual plan 更适合真实网申表单。

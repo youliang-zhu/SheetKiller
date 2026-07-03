@@ -38,6 +38,12 @@ function splitTokens(value) {
   return String(value || '').split(/[,\uFF0C\u3001\s/>-]+/).map((token) => token.trim()).filter(Boolean);
 }
 
+function valuesOf(item, key, fallback = item.value) {
+  const raw = item[key];
+  const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  return [fallback, ...list].map((value) => String(value || '').trim()).filter(Boolean);
+}
+
 function fieldSelector(index) {
   return `[data-sheetkiller-probe-id="${index}"]`;
 }
@@ -53,6 +59,17 @@ const browserRuntime = String.raw`
     '[contenteditable=""]',
     '[role="textbox"]',
     '[role="combobox"]'
+  ].join(',');
+  const RADIO_GROUP_SELECTOR = [
+    '.el-radio-group',
+    '.ant-radio-group',
+    '[role="radiogroup"]'
+  ].join(',');
+  const RADIO_SELECTOR = [
+    '.el-radio',
+    '.el-radio-button',
+    '.ant-radio-wrapper',
+    '[role="radio"]'
   ].join(',');
   const OPTION_SELECTOR = [
     '[role="option"]',
@@ -124,6 +141,9 @@ const browserRuntime = String.raw`
   }
 
   function optionsOf(el) {
+    if (el.matches?.(RADIO_GROUP_SELECTOR)) {
+      return Array.from(el.querySelectorAll(RADIO_SELECTOR)).map((option) => norm(option.textContent || '')).filter(Boolean);
+    }
     if (el instanceof HTMLSelectElement) {
       return Array.from(el.options).map((option) => norm(option.textContent || option.value)).filter(Boolean);
     }
@@ -151,6 +171,10 @@ const browserRuntime = String.raw`
   }
 
   function valueOf(el) {
+    if (el.matches?.(RADIO_GROUP_SELECTOR)) {
+      const selected = el.querySelector('.is-checked, .ant-radio-wrapper-checked, [aria-checked="true"]');
+      return norm(selected?.textContent || '');
+    }
     if (el instanceof HTMLInputElement) {
       if (el.type === 'radio' || el.type === 'checkbox') return el.checked ? 'true' : 'false';
       return el.value || '';
@@ -169,32 +193,37 @@ const browserRuntime = String.raw`
     return '';
   }
 
+  function fieldFromElement(el, index) {
+    const root = rootOf(el);
+    const label = labelOf(el);
+    const context = textWithoutControls(root);
+    const type = el.matches?.(RADIO_GROUP_SELECTOR) ? 'radio' : kindOf(el);
+    const text = [label, context, el.placeholder, el.name, el.id, el.getAttribute('aria-label')].join(' ');
+    el.setAttribute('data-sheetkiller-probe-id', String(index));
+    return {
+      index,
+      type,
+      label,
+      context,
+      placeholder: el.getAttribute('placeholder') || '',
+      name: el.getAttribute('name') || '',
+      id: el.getAttribute('id') || '',
+      options: optionsOf(el),
+      value: valueOf(el),
+      readOnly: Boolean(el.readOnly),
+      disabled: Boolean(el.disabled),
+      sensitive: sensitive(text)
+    };
+  }
+
   function scan() {
-    return Array.from(document.querySelectorAll(SCANNABLE))
+    const baseElements = Array.from(document.querySelectorAll(SCANNABLE))
       .filter((el) => visible(el))
-      .map((el, index) => {
-        const root = rootOf(el);
-        const label = labelOf(el);
-        const context = textWithoutControls(root);
-        const type = kindOf(el);
-        const text = [label, context, el.placeholder, el.name, el.id, el.getAttribute('aria-label')].join(' ');
-        el.setAttribute('data-sheetkiller-probe-id', String(index));
-        return {
-          index,
-          type,
-          label,
-          context,
-          placeholder: el.getAttribute('placeholder') || '',
-          name: el.getAttribute('name') || '',
-          id: el.getAttribute('id') || '',
-          options: optionsOf(el),
-          value: valueOf(el),
-          readOnly: Boolean(el.readOnly),
-          disabled: Boolean(el.disabled),
-          sensitive: sensitive(text)
-        };
-      })
-      .filter((field) => field.type !== 'skip');
+      .filter((field) => kindOf(field) !== 'skip');
+    const baseSet = new Set(baseElements);
+    const radioGroups = Array.from(document.querySelectorAll(RADIO_GROUP_SELECTOR))
+      .filter((el) => visible(el) && !baseSet.has(el));
+    return [...baseElements, ...radioGroups].map(fieldFromElement);
   }
 
   function dispatch(el) {
@@ -245,6 +274,46 @@ const browserRuntime = String.raw`
     return annotate(clickable, 'data-sheetkiller-option-id');
   }
 
+  function visibleOptions(limit = 30) {
+    return Array.from(document.querySelectorAll(OPTION_SELECTOR))
+      .filter(visible)
+      .map((option) => norm(option.textContent || ''))
+      .filter(Boolean)
+      .slice(0, limit);
+  }
+
+  function activeEditableId() {
+    const active = document.activeElement;
+    if (!active || !(active instanceof Element)) return '';
+    if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active.isContentEditable)) return '';
+    if ((active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && (active.readOnly || active.disabled)) return '';
+    return annotate(active, 'data-sheetkiller-active-editable-id');
+  }
+
+  function popupSearchId() {
+    const candidates = Array.from(document.querySelectorAll([
+      '.el-select-dropdown input:not([disabled])',
+      '.el-popper input:not([disabled])',
+      '.ant-select-dropdown input:not([disabled])',
+      '[role="dialog"] input:not([disabled])',
+      '.el-dialog input:not([disabled])',
+      '.ant-modal input:not([disabled])'
+    ].join(','))).filter(visible);
+    const target = candidates.find((input) => !input.readOnly) || candidates[0];
+    if (!target) return '';
+    return annotate(target, 'data-sheetkiller-popup-search-id');
+  }
+
+  function markChoice(index, value) {
+    const el = document.querySelector('[data-sheetkiller-probe-id="' + index + '"]');
+    if (!el) return '';
+    const root = el.matches?.(RADIO_GROUP_SELECTOR) ? el : rootOf(el);
+    const candidates = Array.from(root.querySelectorAll(RADIO_SELECTOR + ', label')).filter(visible);
+    const target = candidates.find((option) => matchesOption(option.textContent || '', value));
+    if (!target) return '';
+    return annotate(target, 'data-sheetkiller-choice-id');
+  }
+
   function fallbackFillText(index, value) {
     const el = document.querySelector('[data-sheetkiller-probe-id="' + index + '"]');
     if (!el) return { ok: false, actual: '', reason: 'element missing' };
@@ -264,7 +333,17 @@ const browserRuntime = String.raw`
     };
   }
 
-  window.__sheetkillerProbe = { scan, triggerFor, markOption, fallbackFillText, readField };
+  window.__sheetkillerProbe = {
+    scan,
+    triggerFor,
+    markOption,
+    markChoice,
+    visibleOptions,
+    activeEditableId,
+    popupSearchId,
+    fallbackFillText,
+    readField
+  };
 })();
 `;
 
@@ -276,6 +355,7 @@ Usage:
 Commands:
   scan       rescan current page and write fields to reports/
   fill       run the current plan and write a report
+  debug 33   open one field and write visible dropdown options to reports/
   reload     reinject probe runtime
   quit       close browser
 `);
@@ -311,6 +391,10 @@ function verifyValue(actual, expected, strategy, visibleText = '') {
     });
   }
   return false;
+}
+
+function verifyAnyValue(actual, expectedValues, strategy, visibleText = '') {
+  return expectedValues.some((expected) => verifyValue(actual, expected, strategy, visibleText));
 }
 
 async function readField(page, index) {
@@ -368,24 +452,140 @@ async function clickMarkedOption(page, value) {
   return true;
 }
 
-async function fillCustomSelect(page, field, value) {
-  if (!(await clickMarkedTrigger(page, field.index))) return { ok: false, reason: 'trigger not found' };
-  await page.waitForTimeout(500);
-  if (!(await clickMarkedOption(page, value))) return { ok: false, reason: 'option not found' };
-  await page.keyboard.press('Tab').catch(() => {});
-  await page.waitForTimeout(300);
-  const readback = await readField(page, field.index);
-  return { ok: verifyValue(readback.actual, value, 'custom-select', readback.visibleText), ...readback };
+async function typeIntoBestSearch(page, field, searchValue) {
+  const selectors = [];
+  const popupId = await page.evaluate(() => window.__sheetkillerProbe.popupSearchId());
+  if (popupId) selectors.push(`[data-sheetkiller-popup-search-id="${popupId}"]`);
+  const activeId = await page.evaluate(() => window.__sheetkillerProbe.activeEditableId());
+  if (activeId) selectors.push(`[data-sheetkiller-active-editable-id="${activeId}"]`);
+  selectors.push(fieldSelector(field.index));
+
+  for (const selector of selectors) {
+    const locator = page.locator(selector).first();
+    try {
+      await locator.click({ timeout: 1200, force: true });
+      await page.keyboard.press('Control+A').catch(() => {});
+      await page.keyboard.type(searchValue, { delay: 15 });
+      return true;
+    } catch {
+      try {
+        await locator.pressSequentially(searchValue, { timeout: 1200, delay: 15 });
+        return true;
+      } catch {}
+    }
+  }
+  return false;
 }
 
-async function fillCascader(page, field, value) {
+async function forceTextFallback(page, field, value) {
+  const locator = page.locator(fieldSelector(field.index)).first();
+  await page.evaluate((index) => {
+    const el = document.querySelector('[data-sheetkiller-probe-id="' + index + '"]');
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      el.removeAttribute('readonly');
+      el.readOnly = false;
+    }
+  }, field.index);
+  return fillTextLike(page, field, value).catch(async (error) => {
+    const fallback = await page.evaluate(
+      ({ index, nextValue }) => window.__sheetkillerProbe.fallbackFillText(index, nextValue),
+      { index: field.index, nextValue: value },
+    );
+    const readback = await readField(page, field.index);
+    return { ok: fallback.ok, actual: readback.actual, visibleText: readback.visibleText, reason: error.message };
+  });
+}
+
+async function fillCustomSelect(page, field, item) {
+  const value = String(item.value || '');
+  const searchValues = valuesOf(item, 'searchValues', value);
+  const acceptValues = valuesOf(item, 'acceptValues', value).concat(searchValues);
+  let lastOptions = [];
+
+  if (!(await clickMarkedTrigger(page, field.index))) return { ok: false, reason: 'trigger not found' };
+  await page.waitForTimeout(500);
+
+  for (const searchValue of searchValues) {
+    await typeIntoBestSearch(page, field, searchValue);
+    await page.waitForTimeout(900);
+    lastOptions = await page.evaluate(() => window.__sheetkillerProbe.visibleOptions());
+    const optionQueries = [searchValue, ...acceptValues];
+    let clicked = false;
+    for (const optionQuery of optionQueries) {
+      if (await clickMarkedOption(page, optionQuery)) {
+        clicked = true;
+        break;
+      }
+    }
+    if (clicked) {
+      await page.keyboard.press('Tab').catch(() => {});
+      await page.waitForTimeout(500);
+      const readback = await readField(page, field.index);
+      return {
+        ok: verifyAnyValue(readback.actual, acceptValues, 'custom-select', readback.visibleText),
+        ...readback,
+        options: lastOptions,
+      };
+    }
+  }
+
+  for (const searchValue of searchValues) {
+    await page.keyboard.press('Enter').catch(() => {});
+    await page.waitForTimeout(500);
+    const enterReadback = await readField(page, field.index);
+    if (verifyAnyValue(enterReadback.actual, acceptValues, 'custom-select', enterReadback.visibleText)) {
+      return { ok: true, ...enterReadback, options: lastOptions };
+    }
+  }
+
+  if (item.allowFreeText) {
+    const freeText = await forceTextFallback(page, field, value);
+    const ok = verifyAnyValue(freeText.actual, acceptValues, 'text', freeText.visibleText);
+    return { ok, ...freeText, options: lastOptions, reason: ok ? 'free text fallback' : 'option not found' };
+  }
+
+  const readback = await readField(page, field.index);
+  return { ok: false, actual: readback.actual, visibleText: readback.visibleText, options: lastOptions, reason: 'option not found' };
+}
+
+async function fillRadio(page, field, value) {
+  const choiceId = await page.evaluate(
+    ({ index, nextValue }) => window.__sheetkillerProbe.markChoice(index, nextValue),
+    { index: field.index, nextValue: value },
+  );
+  if (!choiceId) return { ok: false, reason: 'radio option not found' };
+  await page.locator(`[data-sheetkiller-choice-id="${choiceId}"]`).first().click({ timeout: 3000, force: true });
+  await page.waitForTimeout(200);
+  const readback = await readField(page, field.index);
+  return { ok: verifyValue(readback.actual, value, 'radio', readback.visibleText), ...readback };
+}
+
+async function fillCascader(page, fields, field, value) {
   const tokens = splitTokens(value);
   if (tokens.length === 0) return { ok: false, reason: 'empty cascader value' };
+  const linkedFields = fields
+    .filter((candidate) => candidate.index >= field.index && candidate.index < field.index + tokens.length + 2)
+    .filter((candidate) => candidate.context === field.context && candidate.placeholder === field.placeholder);
+  if (linkedFields.length >= Math.min(tokens.length, 2)) {
+    let linkedOk = 0;
+    for (let i = 0; i < Math.min(tokens.length, linkedFields.length); i += 1) {
+      const result = await fillCustomSelect(page, linkedFields[i], { value: tokens[i] });
+      if (result.ok || verifyValue(result.actual, tokens[i], 'custom-select', result.visibleText)) linkedOk += 1;
+      await page.waitForTimeout(300);
+    }
+    const readback = await readField(page, field.index);
+    if (linkedOk >= Math.min(tokens.length, 2)) {
+      return { ok: true, actual: readback.actual, visibleText: readback.visibleText, clicked: linkedOk, reason: 'filled linked region fields' };
+    }
+  }
+
   if (!(await clickMarkedTrigger(page, field.index))) return { ok: false, reason: 'trigger not found' };
   await page.waitForTimeout(600);
 
   let clicked = 0;
   for (const token of tokens) {
+    await page.locator(fieldSelector(field.index)).first().pressSequentially(token, { timeout: 1000, delay: 10 }).catch(() => {});
+    await page.waitForTimeout(300);
     if (!(await clickMarkedOption(page, token))) break;
     clicked += 1;
     await page.waitForTimeout(500);
@@ -404,7 +604,7 @@ async function fillCascader(page, field, value) {
   };
 }
 
-async function fillOne(page, field, item) {
+async function fillOne(page, fields, field, item) {
   if (field.sensitive && !['phone', 'email', 'id_card'].includes(field.sensitive)) {
     return { ok: false, skipped: true, reason: `sensitive human field: ${field.sensitive}` };
   }
@@ -417,23 +617,26 @@ async function fillOne(page, field, item) {
   if (strategy === 'text' || strategy === 'textarea' || strategy === 'date' || strategy === 'contenteditable') {
     return fillTextLike(page, field, value);
   }
+  if (strategy === 'radio') return fillRadio(page, field, value);
   if (strategy === 'select') return fillNativeSelect(page, field, value);
-  if (strategy === 'custom-select') return fillCustomSelect(page, field, value);
-  if (strategy === 'cascader-region') return fillCascader(page, field, value);
+  if (strategy === 'custom-select') return fillCustomSelect(page, field, item);
+  if (strategy === 'cascader-region') return fillCascader(page, fields, field, value);
   return { ok: false, reason: `unsupported strategy: ${strategy}` };
 }
 
 async function runPlan(page, plan) {
-  const fields = await page.evaluate(() => window.__sheetkillerProbe.scan());
+  let fields = await page.evaluate(() => window.__sheetkillerProbe.scan());
   const reports = [];
   for (const item of plan) {
+    fields = await page.evaluate(() => window.__sheetkillerProbe.scan());
     const field = findField(fields, item);
     if (!field) {
       reports.push({ item, status: 'failed_to_find_field' });
       continue;
     }
-    const result = await fillOne(page, field, item);
-    const verified = result.ok && verifyValue(result.actual, item.value, item.strategy || field.type, result.visibleText);
+    const result = await fillOne(page, fields, field, item);
+    const expectedValues = valuesOf(item, 'acceptValues', item.value).concat(valuesOf(item, 'searchValues', item.value));
+    const verified = result.ok && verifyAnyValue(result.actual, expectedValues, item.strategy || field.type, result.visibleText);
     reports.push({
       field,
       item,
@@ -444,10 +647,38 @@ async function runPlan(page, plan) {
       reason: result.reason || (verified ? 'filled' : 'fill failed'),
       clicked: result.clicked,
       skipped: result.skipped,
+      options: result.options || [],
     });
   }
   const afterFields = await page.evaluate(() => window.__sheetkillerProbe.scan());
   return { fields, afterFields, reports };
+}
+
+async function debugField(page, plan, rawArgs) {
+  const [indexText, ...valueParts] = rawArgs.trim().split(/\s+/).filter(Boolean);
+  const index = Number(indexText);
+  if (!Number.isFinite(index)) return { error: 'usage: debug <index> [search text]' };
+
+  const fields = await page.evaluate(() => window.__sheetkillerProbe.scan());
+  const field = fields.find((candidate) => candidate.index === index);
+  if (!field) return { error: `field ${index} not found`, fields };
+
+  const planItem = plan.find((item) => item.index === index) || {};
+  const searchValues = valueParts.length > 0 ? [valueParts.join(' ')] : valuesOf(planItem, 'searchValues', planItem.value || '');
+  await clickMarkedTrigger(page, index);
+  await page.waitForTimeout(500);
+
+  const attempts = [];
+  for (const searchValue of searchValues.length ? searchValues : ['']) {
+    if (searchValue) await typeIntoBestSearch(page, field, searchValue);
+    await page.waitForTimeout(900);
+    attempts.push({
+      searchValue,
+      options: await page.evaluate(() => window.__sheetkillerProbe.visibleOptions(80)),
+      readback: await readField(page, index),
+    });
+  }
+  return { field, planItem, attempts };
 }
 
 async function main() {
@@ -531,7 +762,25 @@ async function main() {
         verified: report.verified,
         actual: report.actual,
         reason: report.reason || report.status,
+        options: report.options?.slice(0, 3).join('|') || '',
       })));
+      return false;
+    }
+    if (command.startsWith('debug ')) {
+      const plan = await loadPlan();
+      await inject();
+      const result = await debugField(page, plan, rawCommand.slice(rawCommand.toLowerCase().indexOf('debug ') + 'debug '.length));
+      const file = await writeJson('manual-debug', result);
+      console.log(`Debug report -> ${file}`);
+      if (result.error) {
+        console.log(result.error);
+      } else {
+        console.table((result.attempts || []).map((attempt) => ({
+          search: attempt.searchValue,
+          actual: attempt.readback?.actual,
+          options: attempt.options?.slice(0, 8).join('|') || '',
+        })));
+      }
       return false;
     }
     if (command) usage();
