@@ -732,10 +732,11 @@ v2 的核心目标是把主流程改成：
 ```text
 scan 当前页面
   -> AI 结合 scan 结果和用户资料生成当前页面专属 fill plan
-  -> 用户预览 / 可编辑
+  -> 暂停，等待用户选择
+     -> 开始填写
+     -> 或只读预览填写方案
   -> fill
-  -> verify
-  -> report
+  -> 用户直接在真实网页上检查和手动修改
 ```
 
 也就是说，AI 不直接操作网页。AI 只负责生成计划，执行仍由本地确定性 executor 完成。
@@ -752,8 +753,8 @@ v2 以后有两种资料入口：
 2. **AI 帮忙完善资料**
    - 用户上传 `cv.md`、PDF、docx，或粘贴简历文本。
    - AI 把简历解析成结构化 profile draft。
-   - 展示新增、修改、不确定字段。
-   - 用户确认后合并到本地 profile。
+   - v2 主流程不做复杂 diff/review。
+   - AI 完成后直接更新本地 profile，用户可以在资料页自行查看和手动修改。
 
 资料准备完成后，v2 的填表主入口不再要求用户手写 plan，而是：
 
@@ -771,18 +772,20 @@ v2 以后有两种资料入口：
 ```text
 1. 用户打开目标网申页面
 2. 用户完成登录、验证码、必要的人机验证
-3. SheetKiller scan 当前页面
-4. 系统把 FieldInventory 发给 planner
+3. 用户点击“扫描并填写”
+4. SheetKiller scan 当前页面
 5. planner 结合 profile 生成 FillPlan
-6. 用户查看计划摘要
-7. 用户点击 fill draft
-8. executor 执行填写
-9. verifier 逐项回读 expected vs actual
-10. report 输出 filled / mismatch / skipped / failed
-11. 用户人工复核和最终提交
+6. UI 暂停在“填写方案已生成”
+7. 用户选择：
+   - “开始填写”：executor 立即执行填写
+   - “检查填写方案”：打开只读预览，用户看完后再开始填写
+8. 填写完成后提示用户在真实网页上检查和手动修改
+9. 用户人工复核和最终提交
 ```
 
 注意：最终提交仍然必须由用户手动完成。
+
+这个流程刻意不把“复杂 plan review / report / debug”放入普通用户主流程。真实网页本身就是最终复核界面；插件只负责把草稿快速、尽量准确地填上去。
 
 ### 14.4 AI planner 输入
 
@@ -849,7 +852,7 @@ type Profile = {
 - 页面 URL pattern
 - 之前保存过的该站点 fill plan
 - 用户手动修正记录
-- 上一次 verifier mismatch 结果
+- 上一次 executor 失败原因摘要
 
 这部分用于减少重复 token 消耗，也让同一个站点越用越准。
 
@@ -862,8 +865,10 @@ type FillPlanItem = {
   index: number
   label: string
   strategy: 'text' | 'textarea' | 'custom-select' | 'cascader-region' | 'radio' | 'checkbox' | 'date'
-  value: string
+  value?: string
   sourcePath?: string
+  expectedValue?: string
+  valueKind: 'profile' | 'generated' | 'manual'
   confidence: number
   reason?: string
   searchValues?: string[]
@@ -878,12 +883,34 @@ type FillPlanItem = {
 
 - `index`：绑定当前 scan 字段。
 - `strategy`：告诉 executor 如何填。
-- `value`：最终要填的值。
+- `value`：最终要填的值。对 `profile` 类型字段，它可以由本地 resolver 根据 `sourcePath` 生成，而不是完全信任 AI。
+- `sourcePath`：资料来源路径。对 `valueKind: 'profile'` 的字段必须存在，例如 `basic.email`、`education[1].school`。
+- `expectedValue`：执行前由本地 resolver 从 profile 解析出的真值，用于 verifier。
+- `valueKind`：区分资料字段、AI 生成字段、用户手动输入字段。
 - `searchValues`：用于学校、专业、地区等远程搜索控件。
-- `acceptValues`：允许 verifier 接受的页面显示值。
+- `acceptValues`：只用于兼容页面选项文案差异，例如 `硕士` vs `硕士（Master）`，不能作为唯一真值来源。
 - `dependsOn`：用于专业依赖专业类别、城市依赖省份等场景。
-- `confidence`：低置信字段不自动填，或要求人工确认。
-- `reviewRequired`：对开放题、生成类内容、歧义项强制人工复核。
+- `confidence`：用于方案预览里标记风险，不作为主流程强制拦截。
+- `reviewRequired`：用于只读预览里提示用户重点看；v2 初期不做复杂审批流。
+
+#### 独立 verifier 真值链
+
+v2 不能让 AI 同时生成填充值和验证标准，否则 verifier 会退化为“AI 自己验证自己”。必须保留 v1 的独立真值链：
+
+```text
+AI planner 输出 sourcePath
+  -> 本地 resolver 从 profile 解析 expectedValue
+  -> executor 使用 expectedValue 填写
+  -> verifier 用 expectedValue 和页面 actual 比对
+```
+
+规则：
+
+- 对 profile 中已有事实的字段，`sourcePath` 必填。
+- `expectedValue` 必须来自本地 profile resolver，而不是直接信任 AI。
+- `acceptValues` 只能作为显示文案兼容，例如学校英文名、学历中英混排、选项附带说明。
+- 如果 AI 生成了 profile 中不存在的内容，必须标记为 `valueKind: 'generated'`，并默认 `reviewRequired: true`。
+- `generated` 字段可以被填写，但完成后必须在真实网页上高亮给用户检查。
 
 ### 14.6 页面专属 plan 缓存
 
@@ -904,34 +931,82 @@ saved-pages/
 
 如果页面字段 signature 没变，则直接复用 plan；如果字段变了，则提示重新生成。
 
-### 14.7 预览和人工确认
+### 14.7 生成后暂停：开始填写或只读预览
 
-AI plan 生成后不要直接 fill，先展示摘要：
-
-```text
-将填写 42 项
-跳过 8 项
-低置信 3 项
-需要人工确认 2 项
-```
-
-每个字段展示：
+AI plan 生成后不要立刻填写。UI 停在一个很轻的中间状态：
 
 ```text
-页面字段：学校名称
-计划填写：Chalmers University of Technology
-资料来源：education[1].school
-置信度：0.94
-策略：custom-select
+填写方案已生成
+预计填写 42 项，跳过 8 项
+
+[开始填写] [检查填写方案]
 ```
 
-用户可以：
+#### A. 开始填写
 
-- 修改 value
-- 修改 strategy
-- 禁用某一项
-- 保存修正到站点记忆
-- 确认执行 fill
+用户点击后：
+
+```text
+正在填写...
+已完成，5 项需要检查，已在页面上标出。请在网页上检查后手动提交
+```
+
+执行逻辑：
+
+- executor 按 plan 执行。
+- 每个字段执行前重新 scan，避免依赖字段状态过期。
+- 失败字段不阻断全局流程。
+- verifier 使用本地 profile resolver 得到的 `expectedValue` 做独立比对。
+- 不进入复杂报告页，但必须在真实网页上高亮需要检查的字段。
+- 完成提示给一个简短摘要，例如：
+
+```text
+已尝试填写 42 项，5 项需要检查，已在页面上标出。
+```
+
+页面高亮规则：
+
+- 绿色细边：已填写且通过 verifier。
+- 黄色边：低置信、格式兼容、或 verifier 只能通过 `acceptValues` 兼容通过。
+- 红色边：填写失败、回读为空、或 `expectedValue` 与页面 actual 不一致。
+- 蓝色边：AI 生成内容、开放题、或 `reviewRequired: true`。
+
+popup 可以保留一个轻量列表，但不是报告页：
+
+```text
+需要检查 5 项
+- 学校名称：候选项非完全匹配
+- 专业：由 AI 推断
+- 开放题：AI 生成内容
+```
+
+点击列表项时滚动到对应网页字段。这样用户不需要重新检查 42 项，只需要看页面上被标出的字段。
+
+#### B. 检查填写方案
+
+这是只读预览，不做可编辑 plan editor。预览内容保持轻量：
+
+```text
+学校名称 -> Chalmers University of Technology
+学历 -> 硕士
+专业类别 -> 计算机科学与技术
+专业 -> 人工智能
+```
+
+对 `reviewRequired`、`generated`、低置信字段，在预览里加简单标记：
+
+```text
+开放题 -> AI 生成内容（需检查）
+专业 -> 人工智能（低置信）
+```
+
+预览页底部只有：
+
+```text
+[返回] [开始填写]
+```
+
+后续如果真实使用中发现需要微调，再考虑增加可编辑能力。v2 初期不做复杂编辑器，以免产品复杂度膨胀。
 
 ### 14.8 和现有 manual plan 的关系
 
@@ -973,9 +1048,9 @@ v1 manual plan executor
 
 - 在资料编辑 UI 里新增“AI 帮忙完善资料”入口。
 - 支持粘贴简历文本或上传简历文件。
-- 调用 OpenAI-compatible API 生成 profile draft。
-- 展示 diff。
-- 用户确认后合并到本地 profile。
+- 调用 OpenAI-compatible API 生成结构化 profile。
+- 直接更新本地 profile。
+- 完成后提示“资料已更新，可在资料页查看和修改”。
 
 这一步不碰网页 fill，只优化资料准备。
 
@@ -983,38 +1058,47 @@ v1 manual plan executor
 
 目标：
 
-- 用户在真实页面点击“AI 生成填写方案”。
+- 用户在真实页面点击“扫描并填写”。
 - content script scan 当前页面。
 - planner 基于 scan + profile 生成 FillPlan。
-- dashboard/popup 展示 plan review。
+- 对 profile 字段，planner 必须输出 `sourcePath`。
+- 本地 resolver 根据 `sourcePath` 生成 `expectedValue`。
+- popup 展示“填写方案已生成”中间状态。
+- 用户可以选择“开始填写”或“检查填写方案”。
 
 通过标准：
 
-- 不填网页也能生成 plan。
-- plan 能导出 JSON。
-- manual:probe 能读取该 JSON 并执行。
+- 不填网页也能生成 plan 并停住。
+- profile 字段都有 `sourcePath`，不能只有 AI 生成的 `value`。
+- 点击“开始填写”后才执行。
+- “检查填写方案”只读预览可打开。
 
-#### Phase V2-3: Plan Review -> Fill
+#### Phase V2-3: Start Fill
 
 目标：
 
-- 用户确认 plan 后，由 executor 填写。
-- verifier 生成报告。
-- mismatch 可反馈给 planner 或保存为站点修正。
+- 用户点击“开始填写”后，由 executor 填写。
+- verifier 使用本地 `expectedValue` 独立验证，不只信任 AI `acceptValues`。
+- 填写完成后给轻量完成提示。
+- 失败、低置信、AI 生成、验证不一致字段在真实网页上高亮。
+- 用户直接在真实网页上检查和手动修改。
 
 通过标准：
 
 - 同一页面第二次可以复用缓存 plan。
-- 用户修正过的字段下次优先采用用户修正。
+- 不打开复杂 report 页面。
+- 需要检查的字段必须能在真实网页上直接定位。
+- 不自动提交。
 
-#### Phase V2-4: 站点记忆和自我修正
+#### Phase V2-4: 站点记忆
 
 目标：
 
 - 记录某站点字段和 profile source 的映射。
-- 记录用户对 plan 的修改。
-- 记录 executor 失败原因，例如 `option not found`、`field disabled`、`readback mismatch`。
+- 记录 executor 失败原因摘要，例如 `option not found`、`field disabled`、`readback mismatch`。
 - 下次生成 plan 时把这些历史作为上下文。
+
+不做复杂用户可见报告。debug 能力保留在开发者工具或 hidden command 中。
 
 ### 14.10 风险和边界
 
@@ -1022,22 +1106,66 @@ v1 manual plan executor
 
 | 风险 | 处理 |
 |---|---|
-| AI 错配字段 | plan review + confidence + verifier |
+| AI 错配字段 | profile 字段强制 `sourcePath`，本地 resolver 生成 `expectedValue`，verifier 独立比对 |
+| verifier 被 AI acceptValues 带偏 | `acceptValues` 只做文案兼容，不能替代本地真值 |
 | 学校/专业远程搜索库候选不可见 | debug options + searchValues + acceptValues |
 | 页面字段 index 漂移 | 使用 field signature 辅助匹配 |
 | 依赖字段未解锁 | FillPlanItem.dependsOn + 每项执行前重新 scan |
-| 开放题生成内容不可靠 | 默认 reviewRequired，不自动提交 |
+| 开放题生成内容不可靠 | 默认 `valueKind: generated` + `reviewRequired`，填写后蓝色高亮 |
+| 只显示“5 项需检查”导致用户全量重查 | 在真实网页上高亮具体字段，并提供轻量跳转列表 |
 | 同站点多页面表单 | 每页独立 scan/plan/cache |
 
-### 14.11 v2 的核心判断
+### 14.11 Impeccable 作为 UI 设计 skill 的使用方式
 
-v2 不应该变成一个慢速“网页 agent”。它应该是：
+`pbakaus/impeccable` 不是 SheetKiller 的用户功能，也不是运行时依赖。它是给 coding agent 使用的设计 skill / detector / 工作流，用来帮助我们把插件 UI 做得更像一个可信的产品工具。
+
+仓库调研结论：
+
+- 项目地址：`https://github.com/pbakaus/impeccable`
+- 本地调研目录：`D:\ToolProjectCode\SheetKiller\external\impeccable`
+- 定位：AI coding agent 的设计指导 skill。
+- 能力：`init`、`shape`、`audit`、`critique`、`polish`、`harden` 等命令。
+- 检测器：包含一批 deterministic UI anti-pattern rules。
+
+SheetKiller 使用它的方式：
+
+```text
+1. 用 Impeccable 初始化 PRODUCT / DESIGN 语境
+2. UI 实现前用 shape 规划信息架构和组件关系
+3. UI 初稿完成后用 audit 检查可访问性、状态、布局、响应式问题
+4. 交互细节完成后用 harden 检查错误态、空态、loading、文本溢出
+5. 最后用 polish 做视觉一致性和产品可信度整理
+```
+
+SheetKiller 应按 Impeccable 的 **product UI** 路线设计，而不是 brand/landing page 路线：
+
+- 安静、克制、信息密度合适。
+- 不做营销式 hero。
+- 不用装饰性渐变、卡片套卡片、无意义大标题。
+- 优先清晰状态：未扫描、扫描中、方案已生成、填写中、填写完成、需要用户检查。
+- 所有交互组件必须有 default / hover / focus / active / disabled / loading / error 状态。
+- 表单控件保留熟悉 affordance，不重新发明下拉框、按钮和弹窗。
+
+建议后续 UI 设计前先让 coding agent 按以下顺序工作：
+
+```text
+/impeccable init
+/impeccable shape SheetKiller extension popup and profile editor
+/impeccable audit dynamic-fill-solution UI
+/impeccable harden scan-and-fill flow
+/impeccable polish final extension UI
+```
+
+如果不实际安装 skill，也可以把 `external/impeccable/skill/reference/product.md` 和 `interaction-design.md` 作为设计检查清单读取。
+
+### 14.12 v2 的核心判断
+
+v2 不应该变成一个慢速“网页 agent”，也不应该变成复杂的企业级审核系统。它应该是：
 
 ```text
 AI 负责理解和规划
 本地 executor 负责确定性执行
-verifier 负责纠错
-用户负责最终确认
+用户直接在真实网页上检查和修正
 ```
 
-这个形态比纯 agent 快，比纯规则泛化能力强，也比预写 manual plan 更适合真实网申表单。
+这个形态比纯 agent 快，比纯规则泛化能力强，也比预写 manual plan 更适合真实网申表单。主流程要保持简单：资料准备好后，用户只需要点“扫描并填写”，在方案生成后选择“开始填写”或“检查填写方案”，最后回到网页上人工复核和提交。
