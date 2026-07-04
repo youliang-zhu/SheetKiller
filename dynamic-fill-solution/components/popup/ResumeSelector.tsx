@@ -81,17 +81,17 @@ export default function ResumeSelector({
   }
 
   return (
-    <div className="flex items-center gap-1 px-3 py-2 border-b border-gray-800 bg-gray-950 overflow-x-auto shrink-0">
+    <div className="flex items-center gap-1.5 overflow-x-auto shrink-0">
       {resumes.map((r) => {
         const isActive = activeId === r.meta.id;
         const isEditing = editingId === r.meta.id;
         return (
           <div
             key={r.meta.id}
-            className={`flex items-center gap-0.5 rounded whitespace-nowrap transition-colors
+            className={`flex items-center gap-0.5 rounded-full whitespace-nowrap transition-colors border
               ${isActive
-                ? 'bg-blue-500 text-white'
-                : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                ? 'bg-slate-950 text-white border-slate-950'
+                : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 hover:text-slate-950'
               }`}
           >
             {isEditing ? (
@@ -106,7 +106,7 @@ export default function ResumeSelector({
                   if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
                 }}
                 maxLength={40}
-                className="px-2 py-1 text-xs bg-gray-900 text-gray-100 border border-blue-400 rounded outline-none w-32"
+                className="px-3 py-1.5 text-xs bg-white text-slate-950 border border-slate-400 rounded-full outline-none w-32"
               />
             ) : (
               <>
@@ -114,7 +114,7 @@ export default function ResumeSelector({
                   onClick={() => onSelect(r.meta.id)}
                   onDoubleClick={() => beginRename(r)}
                   title={t('resume.hint')}
-                  className="px-3 py-1 text-xs"
+                  className="px-3 py-1.5 text-xs font-semibold"
                 >
                   {r.meta.name || t('resume.default')}
                 </button>
@@ -122,7 +122,7 @@ export default function ResumeSelector({
                   onClick={(e) => { e.stopPropagation(); beginRename(r); }}
                   title={t('resume.rename')}
                   className={`pr-1 text-[10px] leading-none transition-opacity
-                    ${isActive ? 'text-white opacity-70 hover:opacity-100' : 'text-gray-400 opacity-50 hover:opacity-100'}`}
+                    ${isActive ? 'text-white opacity-70 hover:opacity-100' : 'text-slate-400 opacity-60 hover:opacity-100'}`}
                 >
                   ✎
                 </button>
@@ -132,7 +132,7 @@ export default function ResumeSelector({
                     className={`pr-2 pl-0.5 text-xs leading-none transition-colors
                       ${confirmDeleteId === r.meta.id
                         ? 'text-red-300 opacity-100 font-bold'
-                        : `opacity-60 hover:opacity-100 ${isActive ? 'text-white' : 'text-gray-400'}`
+                        : `opacity-60 hover:opacity-100 ${isActive ? 'text-white' : 'text-slate-400'}`
                       }`}
                     title={confirmDeleteId === r.meta.id ? t('resume.delete.confirm') : t('resume.delete')}
                   >
@@ -146,7 +146,7 @@ export default function ResumeSelector({
       })}
       <button
         onClick={onCreate}
-        className="px-3 py-1 text-xs rounded bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-blue-400 whitespace-nowrap transition-colors"
+        className="px-3 py-1.5 text-xs font-semibold rounded-full bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-950 border border-slate-200 whitespace-nowrap transition-colors"
       >
         {t('resume.new')}
       </button>

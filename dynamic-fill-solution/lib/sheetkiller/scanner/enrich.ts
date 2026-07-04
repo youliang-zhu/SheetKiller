@@ -144,6 +144,7 @@ export function scanEnrichedFields(doc: Document = document): FieldInventoryItem
     ].join(' ');
     fields.push({
       fieldId: `field-${index++}`,
+      index: index - 1,
       element: el,
       inputType,
       label,
@@ -165,4 +166,3 @@ export function scanEnrichedFields(doc: Document = document): FieldInventoryItem
   }
   return fields;
 }
-

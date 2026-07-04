@@ -11,15 +11,16 @@ import { useI18n } from '@/lib/i18n';
 type Mode = 'json' | 'resume';
 
 interface Props {
+  initialMode?: Mode;
   onClose: () => void;
   onImported: () => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function ImportDialog({ onClose, onImported }: Props) {
+export default function ImportDialog({ initialMode = 'json', onClose, onImported }: Props) {
   const { t } = useI18n();
-  const [mode, setMode] = useState<Mode>('json');
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [status, setStatus] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -116,13 +117,13 @@ export default function ImportDialog({ onClose, onImported }: Props) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       onClick={handleOverlayClick}
     >
-      <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-xl w-80 flex flex-col overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-3xl shadow-2xl w-96 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-          <span className="text-sm font-semibold text-gray-200">{t('import.title')}</span>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+          <span className="sk-display text-lg font-semibold text-slate-950">{t('import.title')}</span>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-200 text-lg leading-none transition-colors"
+            className="text-slate-400 hover:text-slate-950 text-lg leading-none transition-colors"
             aria-label={t('import.close')}
           >
             ×
@@ -130,23 +131,23 @@ export default function ImportDialog({ onClose, onImported }: Props) {
         </div>
 
         {/* Mode tabs */}
-        <div className="flex border-b border-gray-700">
+        <div className="flex border-b border-slate-200 bg-slate-50 px-2 pt-2">
           <button
             onClick={() => { setMode('json'); resetMessages(); }}
-            className={`flex-1 py-2 text-xs font-medium transition-colors ${
+            className={`flex-1 rounded-t-2xl py-2 text-xs font-semibold transition-colors ${
               mode === 'json'
-                ? 'bg-gray-800 text-blue-400 border-b-2 border-blue-400'
-                : 'text-gray-400 hover:text-gray-200'
+                ? 'bg-white text-slate-950 border border-b-white border-slate-200'
+                : 'text-slate-500 hover:text-slate-800'
             }`}
           >
             {t('import.json')}
           </button>
           <button
             onClick={() => { setMode('resume'); resetMessages(); }}
-            className={`flex-1 py-2 text-xs font-medium transition-colors ${
+            className={`flex-1 rounded-t-2xl py-2 text-xs font-semibold transition-colors ${
               mode === 'resume'
-                ? 'bg-gray-800 text-blue-400 border-b-2 border-blue-400'
-                : 'text-gray-400 hover:text-gray-200'
+                ? 'bg-white text-slate-950 border border-b-white border-slate-200'
+                : 'text-slate-500 hover:text-slate-800'
             }`}
           >
             {t('import.resume')}
@@ -154,8 +155,8 @@ export default function ImportDialog({ onClose, onImported }: Props) {
         </div>
 
         {/* Body */}
-        <div className="p-4 flex flex-col gap-3">
-          <p className="text-xs text-gray-400">
+        <div className="p-5 flex flex-col gap-3">
+          <p className="text-xs text-slate-500">
             {mode === 'json'
               ? t('import.json')
               : t('import.resume')}
@@ -165,8 +166,8 @@ export default function ImportDialog({ onClose, onImported }: Props) {
           <button
             onClick={triggerFileInput}
             disabled={loading}
-            className={`w-full border border-dashed border-gray-600 rounded-md py-6 text-xs text-gray-400
-              hover:border-blue-500 hover:text-blue-400 transition-colors
+            className={`w-full border border-dashed border-slate-300 rounded-3xl bg-slate-50 py-8 text-xs text-slate-500
+              hover:border-slate-500 hover:text-slate-950 transition-colors
               ${loading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
           >
             {loading ? t('import.parsing') : t('import.click')}
@@ -183,14 +184,14 @@ export default function ImportDialog({ onClose, onImported }: Props) {
 
           {/* Status */}
           {status && (
-            <p className="text-xs text-green-400 bg-green-400/10 rounded px-2 py-1">
+            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-2xl px-3 py-2">
               {status}
             </p>
           )}
 
           {/* Error */}
           {error && (
-            <p className="text-xs text-red-400 bg-red-400/10 rounded px-2 py-1">
+            <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-2xl px-3 py-2">
               {error}
             </p>
           )}

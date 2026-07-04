@@ -21,11 +21,53 @@ import { detectElementKind } from '@/lib/capture/element-value';
 import { mountCandidatePicker, type MountedCandidatePicker } from '@/components/capture/mount-candidate-picker';
 import { scanEnrichedFields } from '@/lib/sheetkiller/scanner/enrich';
 import { executeFillPlan } from '@/lib/sheetkiller/executor/dynamic-fill';
-import type { FieldInventoryItem, FillPlanItem } from '@/lib/sheetkiller/types';
+import { installTemporarySubmitGuard } from '@/lib/sheetkiller/safety/submit-guard';
+import type { FieldInventoryItem, FillPlanItem, SheetKillerReportItem } from '@/lib/sheetkiller/types';
 
 function serializeSheetKillerField(field: FieldInventoryItem): Omit<FieldInventoryItem, 'element'> {
   const { element: _element, ...rest } = field;
   return rest;
+}
+
+function registerSheetKillerDynamicListener(): () => void {
+  const listener = (
+    message: { type?: string; plan?: FillPlanItem[] },
+    _sender: chrome.runtime.MessageSender,
+    sendResponse: (response: unknown) => void,
+  ): true | void => {
+    if (message?.type === 'SHEETKILLER_SCAN') {
+      try {
+        const fields = scanEnrichedFields(document).map(serializeSheetKillerField);
+        sendResponse({ ok: true, data: fields });
+      } catch (error) {
+        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+    }
+    if (message?.type === 'SHEETKILLER_EXECUTE_PLAN') {
+      (async () => {
+        const cleanupGuard = installTemporarySubmitGuard(document);
+        try {
+          const fields = scanEnrichedFields(document);
+          const plan = message.plan ?? [];
+          const result = await executeFillPlan(fields, plan, {
+            rescan: () => scanEnrichedFields(document),
+          });
+          applySheetKillerHighlights(result.reports, plan);
+          sendResponse({ ok: true, data: result });
+        } finally {
+          cleanupGuard();
+        }
+      })().catch((error) => sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      return true;
+    }
+  };
+
+  chrome.runtime.onMessage.addListener(listener);
+  return () => chrome.runtime.onMessage.removeListener(listener);
 }
 
 export default defineContentScript({
@@ -38,6 +80,9 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
 
   async main(ctx) {
+    const cleanupSheetKillerDynamicListener = registerSheetKillerDynamicListener();
+    ctx.onInvalidated(cleanupSheetKillerDynamicListener);
+
     await new Promise((r) => setTimeout(r, 1000));
 
     // Count contenteditable surfaces as form elements too, so pages that are
@@ -574,26 +619,6 @@ export default defineContentScript({
         })().catch(() => sendResponse({ ok: false }));
         return true;
       }
-      if (message?.type === 'SHEETKILLER_SCAN') {
-        try {
-          const fields = scanEnrichedFields(document).map(serializeSheetKillerField);
-          sendResponse({ ok: true, data: fields });
-        } catch (error) {
-          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
-        }
-        return true;
-      }
-      if (message?.type === 'SHEETKILLER_EXECUTE_PLAN') {
-        (async () => {
-          const fields = scanEnrichedFields(document);
-          const result = await executeFillPlan(fields, message.plan ?? []);
-          sendResponse({ ok: true, data: result });
-        })().catch((error) => sendResponse({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }));
-        return true;
-      }
     };
     chrome.runtime.onMessage.addListener(messageListener);
 
@@ -651,6 +676,52 @@ function paintDraftHighlights(elements: HTMLElement[]): void {
   for (const el of elements) {
     setImportantShadow(el, '0 0 0 2px #22d3ee'); // cyan for draft
     el.setAttribute('data-formpilot-status', 'draft');
+  }
+}
+
+function applySheetKillerHighlights(
+  reports: SheetKillerReportItem[],
+  plan: FillPlanItem[],
+): void {
+  const fields = scanEnrichedFields(document);
+  const fieldById = new Map(fields.map((field) => [field.fieldId, field]));
+  const planById = new Map(plan.map((item) => [item.fieldId, item]));
+
+  for (const report of reports) {
+    const field = fieldById.get(report.fieldId);
+    const item = planById.get(report.fieldId);
+    if (!field?.element || !(field.element instanceof HTMLElement)) continue;
+
+    const needsReview = item?.reviewRequired ||
+      item?.valueKind === 'generated' ||
+      item?.safety === 'fill_requires_review';
+
+    let shadow = '0 0 0 2px #22c55e';
+    let status = 'sheetkiller-verified';
+    if (needsReview) {
+      shadow = '0 0 0 2px #3b82f6';
+      status = 'sheetkiller-review';
+    }
+    if (
+      report.status === 'skipped_low_confidence' ||
+      report.status === 'needs_user_input' ||
+      report.status === 'filled_but_unverifiable'
+    ) {
+      shadow = '0 0 0 2px #f59e0b';
+      status = 'sheetkiller-uncertain';
+    }
+    if (
+      report.status === 'failed_to_fill' ||
+      report.status === 'filled_but_mismatch' ||
+      report.status === 'skipped_sensitive' ||
+      report.status === 'skipped_requires_human'
+    ) {
+      shadow = '0 0 0 2px #ef4444';
+      status = 'sheetkiller-failed';
+    }
+
+    setImportantShadow(field.element, shadow);
+    field.element.setAttribute('data-formpilot-status', status);
   }
 }
 

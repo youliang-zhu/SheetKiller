@@ -31,36 +31,30 @@ export function useI18n() {
  * Gracefully falls back to 'en' if chrome.i18n is unavailable (e.g. tests).
  */
 export function detectDefaultLocale(): Locale {
-  try {
-    const ui = chrome?.i18n?.getUILanguage?.() ?? '';
-    return ui.toLowerCase().startsWith('zh') ? 'zh' : 'en';
-  } catch {
-    return 'en';
-  }
+  return 'zh';
 }
 
 /** Resolve locale from storage, falling back to browser detection. */
 export function resolveLocale(stored: unknown): Locale {
-  if (stored === 'zh' || stored === 'en') return stored;
-  return detectDefaultLocale();
+  return stored === 'zh' ? 'zh' : detectDefaultLocale();
 }
 
 export function useI18nProvider(): I18nContextType {
-  const [locale, setLocaleState] = useState<Locale>(() => detectDefaultLocale());
+  const [locale, setLocaleState] = useState<Locale>('zh');
 
   useEffect(() => {
     // Override detected default with user's stored preference, if any.
     chrome.storage.local.get('formpilot:locale').then((result) => {
       const saved = result['formpilot:locale'] as Locale;
-      if (saved && (saved === 'zh' || saved === 'en')) {
-        setLocaleState(saved);
+      if (saved !== 'zh') {
+        chrome.storage.local.set({ 'formpilot:locale': 'zh' });
       }
     });
   }, []);
 
-  const setLocale = useCallback((newLocale: Locale) => {
-    setLocaleState(newLocale);
-    chrome.storage.local.set({ 'formpilot:locale': newLocale });
+  const setLocale = useCallback((_newLocale: Locale) => {
+    setLocaleState('zh');
+    chrome.storage.local.set({ 'formpilot:locale': 'zh' });
   }, []);
 
   const t = useCallback(

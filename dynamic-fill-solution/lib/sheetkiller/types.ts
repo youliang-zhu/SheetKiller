@@ -4,6 +4,7 @@ export type Confidence = 'high' | 'medium' | 'low';
 
 export interface FieldInventoryItem {
   fieldId: string;
+  index?: number;
   element: Element;
   inputType: InputType | 'file' | 'unknown';
   label: string;
@@ -50,17 +51,31 @@ export interface LlmSafeProfileFact {
   provenance: ProfileFact['provenance'];
 }
 
+export type SerializableFieldInventoryItem = Omit<FieldInventoryItem, 'element'>;
+
 export interface FillPlanItem {
   fieldId: string;
+  index?: number;
+  label?: string;
   profileSource: string;
+  sourcePath?: string;
   expectedValue: string;
+  value?: string;
+  valueKind?: 'profile' | 'generated' | 'manual';
   strategy: InputType | 'cascader-region' | 'skip';
   confidence: Confidence;
+  confidenceScore?: number;
   reason: string;
   source: 'adapter' | 'memory' | 'heuristic' | 'llm' | 'generated';
+  searchValues?: string[];
+  acceptValues?: string[];
+  allowFreeText?: boolean;
+  dependsOn?: number[];
+  reviewRequired?: boolean;
   safety:
     | 'fill'
     | 'fill_requires_review'
+    | 'needs_user_input'
     | 'skip_sensitive'
     | 'skip_upload'
     | 'skip_low_confidence'
@@ -91,10 +106,10 @@ export interface SheetKillerReportItem {
     | 'filled_and_verified'
     | 'filled_but_mismatch'
     | 'filled_but_unverifiable'
+    | 'needs_user_input'
     | 'skipped_low_confidence'
     | 'skipped_sensitive'
     | 'skipped_requires_human'
     | 'failed_to_fill';
   reason: string;
 }
-

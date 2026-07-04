@@ -32,36 +32,36 @@ describe('detectDefaultLocale', () => {
     expect(detectDefaultLocale()).toBe('zh');
   });
 
-  it('returns en for en-US', () => {
+  it('returns zh for en-US in Chinese-only UI build', () => {
     setBrowserLang('en-US');
-    expect(detectDefaultLocale()).toBe('en');
+    expect(detectDefaultLocale()).toBe('zh');
   });
 
-  it('returns en for ja / fr / anything non-zh', () => {
+  it('returns zh for ja / fr / anything non-zh in Chinese-only UI build', () => {
     setBrowserLang('ja');
-    expect(detectDefaultLocale()).toBe('en');
+    expect(detectDefaultLocale()).toBe('zh');
     setBrowserLang('fr-FR');
-    expect(detectDefaultLocale()).toBe('en');
+    expect(detectDefaultLocale()).toBe('zh');
   });
 
-  it('returns en when chrome.i18n.getUILanguage is missing', () => {
+  it('returns zh when chrome.i18n.getUILanguage is missing', () => {
     setBrowserLang(undefined);
-    expect(detectDefaultLocale()).toBe('en');
+    expect(detectDefaultLocale()).toBe('zh');
   });
 });
 
 describe('resolveLocale', () => {
-  it('returns the stored value when it is a valid locale', () => {
+  it('returns zh even when stale stored value is en', () => {
     expect(resolveLocale('zh')).toBe('zh');
-    expect(resolveLocale('en')).toBe('en');
+    expect(resolveLocale('en')).toBe('zh');
   });
 
-  it('falls back to detectDefaultLocale when stored is undefined or invalid', () => {
+  it('falls back to zh when stored is undefined or invalid', () => {
     setBrowserLang('en-US');
-    expect(resolveLocale(undefined)).toBe('en');
-    expect(resolveLocale(null)).toBe('en');
-    expect(resolveLocale('')).toBe('en');
-    expect(resolveLocale('xx')).toBe('en');
+    expect(resolveLocale(undefined)).toBe('zh');
+    expect(resolveLocale(null)).toBe('zh');
+    expect(resolveLocale('')).toBe('zh');
+    expect(resolveLocale('xx')).toBe('zh');
 
     setBrowserLang('zh-CN');
     expect(resolveLocale(undefined)).toBe('zh');

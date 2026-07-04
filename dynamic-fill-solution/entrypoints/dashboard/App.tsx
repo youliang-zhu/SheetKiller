@@ -7,26 +7,34 @@ import {
   deleteResume,
   exportResume,
   getActiveResumeId,
+  importResume,
   listResumes,
   renameResume,
   setActiveResumeId,
   updateResume,
 } from '@/lib/storage/resume-store';
+import { countFields } from '@/lib/storage/resume-utils';
+import { extractResumeFields, toResume } from '@/lib/import/resume-extractor';
+import { getSettings } from '@/lib/storage/settings-store';
+import { completeProfileWithAi, mergeAiProfileCompletion } from '@/lib/import/ai-profile-completer';
 
 import Sidebar, { type SectionId } from '@/components/popup/Sidebar';
 import ResumeSelector from '@/components/popup/ResumeSelector';
 import StatusBar from '@/components/popup/StatusBar';
 import ImportDialog from '@/components/popup/ImportDialog';
+import ProfileModeWorkbench, { type ProfileEditorMode } from '@/components/popup/ProfileModeWorkbench';
 
 import BasicInfoSection from '@/components/popup/sections/BasicInfo';
 import EducationSection from '@/components/popup/sections/Education';
-import WorkSection from '@/components/popup/sections/Work';
-import ProjectsSection from '@/components/popup/sections/Projects';
+import ExperienceSection from '@/components/popup/sections/ExperienceSection';
+import AchievementsSection from '@/components/popup/sections/AchievementsSection';
 import SkillsSection from '@/components/popup/sections/Skills';
 import JobPreferenceSection from '@/components/popup/sections/JobPreference';
-import CustomFieldsSection from '@/components/popup/sections/CustomFields';
+import SupplementalInfoSection from '@/components/popup/sections/SupplementalInfo';
 import SettingsSection from '@/components/popup/sections/Settings';
 import SavedPagesSection from '@/components/popup/sections/SavedPages';
+
+const PROFILE_MODE_KEY = 'formpilot:profileEditorMode';
 
 export default function App() {
   const i18n = useI18nProvider();
@@ -34,7 +42,10 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [section, setSection] = useState<SectionId>('basic');
   const [showImport, setShowImport] = useState(false);
+  const [importMode, setImportMode] = useState<'json' | 'resume'>('resume');
+  const [profileMode, setProfileMode] = useState<ProfileEditorMode>('manual');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [reviewCount, setReviewCount] = useState(0);
 
   // ─── Pending save refs (debounce race-condition fix) ──────────────────────
   const pendingRef = useRef<{ id: string; patch: Partial<Omit<Resume, 'meta'>> } | null>(null);
@@ -66,8 +77,8 @@ export default function App() {
   // ─── Hash routing on mount ────────────────────────────────────────────────
 
   const VALID_SECTIONS: SectionId[] = [
-    'basic', 'education', 'work', 'projects', 'skills',
-    'jobPreference', 'custom', 'savedPages', 'settings',
+    'basic', 'education', 'experience', 'achievements', 'skills',
+    'jobPreference', 'supplemental', 'savedPages', 'settings',
   ];
 
   useEffect(() => {
@@ -113,10 +124,16 @@ export default function App() {
 
   useEffect(() => {
     async function init() {
-      const [all, storedActiveId] = await Promise.all([
+      const [all, storedActiveId, storedMode] = await Promise.all([
         listResumes(),
         getActiveResumeId(),
+        chrome.storage.local.get(PROFILE_MODE_KEY),
       ]);
+
+      const mode = storedMode[PROFILE_MODE_KEY];
+      if (mode === 'manual' || mode === 'import' || mode === 'ai') {
+        setProfileMode(mode);
+      }
 
       if (all.length === 0) {
         const created = await createResume(i18n.t('resume.default'));
@@ -163,6 +180,7 @@ export default function App() {
   const handleUpdate = useCallback(
     (patch: Partial<Omit<Resume, 'meta'>>) => {
       if (!activeId) return;
+      setReviewCount(0);
       setResumes((prev) =>
         prev.map((r) =>
           r.meta.id === activeId
@@ -234,6 +252,76 @@ export default function App() {
     }
   }, [activeId, resumes]);
 
+  const handleModeChange = useCallback(async (mode: ProfileEditorMode) => {
+    setProfileMode(mode);
+    await chrome.storage.local.set({ [PROFILE_MODE_KEY]: mode });
+  }, []);
+
+  const openImportDialog = useCallback((mode: 'json' | 'resume') => {
+    setImportMode(mode);
+    setShowImport(true);
+  }, []);
+
+  const handleImportText = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('请先粘贴简历文本');
+
+    const extracted = extractResumeFields(trimmed);
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const resumeName = extracted.basic.name || 'Imported Resume';
+    const resume = toResume(extracted, id, resumeName);
+    const imported = await importResume(JSON.stringify(resume));
+    await setActiveResumeId(imported.meta.id);
+    setActiveId(imported.meta.id);
+    setReviewCount(countFields(imported).filled);
+    await loadResumes();
+
+    return {
+      name: imported.meta.name,
+      filledCount: countFields(imported).filled,
+    };
+  }, [loadResumes]);
+
+  const handleAiImprove = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('请先粘贴待完善的资料文本');
+    if (!activeId || !activeResume) throw new Error('请先选择一份资料');
+
+    await flushPendingSave();
+    const aiProfileResult = await chrome.runtime.sendMessage({
+      type: 'AI_COMPLETE_PROFILE',
+      resumeText: trimmed,
+    });
+    if (!aiProfileResult?.ok) {
+      throw new Error(aiProfileResult?.error ?? 'AI 瀹屽杽璧勬枡澶辫触');
+    }
+    const aiProfileData = aiProfileResult.data as { filledCount: number; needsReview: number };
+    setReviewCount(aiProfileData.needsReview);
+    await refreshActiveResume();
+    return aiProfileData;
+
+    const settings = await getSettings();
+    if (!settings.apiProvider || !settings.apiKey) {
+      throw new Error('请先选择 AI 供应商并填写 API Key');
+    }
+
+    const providerDefaults = {
+      openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5' },
+      deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+    } as const;
+    const completion = await completeProfileWithAi(
+      trimmed,
+      settings,
+      providerDefaults[settings.apiProvider],
+    );
+    const { patch, filledCount } = mergeAiProfileCompletion(activeResume, completion);
+    await updateResume(activeId, patch);
+    const data = { filledCount, needsReview: filledCount };
+    setReviewCount(filledCount);
+    await refreshActiveResume();
+    return data;
+  }, [activeId, activeResume, flushPendingSave, refreshActiveResume]);
+
   // ─── Render section content ───────────────────────────────────────────────
 
   function renderContent() {
@@ -269,18 +357,24 @@ export default function App() {
             onChange={(items) => handleUpdate({ education: items })}
           />
         );
-      case 'work':
+      case 'experience':
         return (
-          <WorkSection
-            data={activeResume.work}
-            onChange={(items) => handleUpdate({ work: items })}
+          <ExperienceSection
+            work={activeResume.work ?? []}
+            projects={activeResume.projects ?? []}
+            campusActivities={activeResume.campusActivities ?? []}
+            onWorkChange={(items) => handleUpdate({ work: items })}
+            onProjectsChange={(items) => handleUpdate({ projects: items })}
+            onCampusActivitiesChange={(items) => handleUpdate({ campusActivities: items })}
           />
         );
-      case 'projects':
+      case 'achievements':
         return (
-          <ProjectsSection
-            data={activeResume.projects}
-            onChange={(items) => handleUpdate({ projects: items })}
+          <AchievementsSection
+            awards={activeResume.awards ?? []}
+            publicationsAndPatents={activeResume.publicationsAndPatents ?? []}
+            onAwardsChange={(items) => handleUpdate({ awards: items })}
+            onPublicationsAndPatentsChange={(items) => handleUpdate({ publicationsAndPatents: items })}
           />
         );
       case 'skills':
@@ -299,11 +393,29 @@ export default function App() {
             }
           />
         );
-      case 'custom':
+      case 'supplemental':
         return (
-          <CustomFieldsSection
-            data={activeResume.custom}
-            onChange={(items) => handleUpdate({ custom: items })}
+          <SupplementalInfoSection
+            familyMembers={activeResume.familyMembers ?? []}
+            statements={activeResume.statements ?? {
+              selfEvaluation: '',
+              additionalNotes: '',
+              motivation: '',
+              careerPlan: '',
+            }}
+            custom={activeResume.custom ?? []}
+            onFamilyMembersChange={(items) => handleUpdate({ familyMembers: items })}
+            onStatementsChange={(patch) => handleUpdate({
+              statements: {
+                selfEvaluation: '',
+                additionalNotes: '',
+                motivation: '',
+                careerPlan: '',
+                ...(activeResume.statements ?? {}),
+                ...patch,
+              },
+            })}
+            onCustomChange={(items) => handleUpdate({ custom: items })}
           />
         );
       default:
@@ -315,16 +427,15 @@ export default function App() {
 
   return (
     <I18nContext.Provider value={i18n}>
-    <div className="min-h-screen bg-gray-950 text-gray-200 flex flex-col">
+    <div className="min-h-screen bg-[var(--sk-bg)] text-[var(--sk-text)] flex flex-col dashboard-shell">
       {/* Top header */}
-      <div className="shrink-0 border-b border-gray-800 bg-gray-950">
-        <div className="max-w-5xl mx-auto px-6 py-3 flex items-center gap-4">
-          <span className="text-base font-bold text-blue-400">⚡ {i18n.t('app.name')}</span>
-          <span className="text-sm text-gray-500 hidden sm:inline">{i18n.t('app.subtitle')}</span>
+      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 backdrop-blur">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-4">
+          <span className="sk-display text-xl font-bold text-slate-950">{i18n.t('app.name')}</span>
           <div className="flex-1" />
           {/* Save indicator */}
-          {saveStatus === 'saving' && <span className="text-xs text-gray-500">{i18n.t('status.saving')}</span>}
-          {saveStatus === 'saved' && <span className="text-xs text-green-500">{i18n.t('status.saved')}</span>}
+          {saveStatus === 'saving' && <span className="text-xs text-slate-500">{i18n.t('status.saving')}</span>}
+          {saveStatus === 'saved' && <span className="text-xs text-emerald-600">{i18n.t('status.saved')}</span>}
           {/* Resume selector in header */}
           <div className="flex items-center gap-2 min-w-0 overflow-hidden">
             <ResumeSelector
@@ -340,38 +451,52 @@ export default function App() {
           <button
             onClick={() => setSection('settings')}
             title={i18n.t('nav.settings')}
-            className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1
+            className={`px-3 py-2 rounded-2xl text-xs font-semibold transition-colors flex items-center gap-1 border
               ${section === 'settings'
-                ? 'bg-blue-500/20 text-blue-400'
-                : 'bg-gray-800 hover:bg-gray-700 text-gray-300'
+                ? 'bg-[var(--sk-primary)] text-white border-[var(--sk-primary)]'
+                : 'bg-white hover:bg-[#f8fbff] text-[var(--sk-muted)] border-[var(--sk-border)]'
               }`}
           >
-            <span>⚙️</span>
             <span className="hidden sm:inline">{i18n.t('nav.settings')}</span>
           </button>
         </div>
       </div>
 
+      {section !== 'settings' && section !== 'savedPages' && (
+        <div className="max-w-6xl mx-auto w-full px-6 pt-6">
+          <ProfileModeWorkbench
+            mode={profileMode}
+            saveStatus={saveStatus}
+            reviewCount={reviewCount}
+            onModeChange={handleModeChange}
+            onImportText={handleImportText}
+            onOpenFileImport={() => openImportDialog('resume')}
+            onOpenJsonImport={() => openImportDialog('json')}
+            onAiImprove={handleAiImprove}
+          />
+        </div>
+      )}
+
       {/* Main layout */}
-      <div className="flex flex-1 max-w-5xl mx-auto w-full">
+      <div className="flex flex-1 max-w-6xl mx-auto w-full px-6 py-6 gap-5">
         {/* Sidebar — sticky */}
-        <div className="sticky top-0 h-screen">
-          <Sidebar active={section} onChange={setSection} className="w-48 h-full" />
+        <div className="sticky top-6 h-[calc(100vh-3rem)]">
+          <Sidebar active={section} onChange={setSection} className="w-52 h-full" />
         </div>
 
         {/* Content area */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-screen">
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="max-w-3xl">
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1">
+            <div className="max-w-4xl rounded-[28px] border border-[var(--sk-border)] bg-white p-6 shadow-[0_16px_42px_rgba(15,23,42,0.08)]">
               {renderContent()}
             </div>
           </div>
 
           {/* Status bar — sticky at bottom */}
-          <div className="sticky bottom-0">
+          <div className="sticky bottom-4 mt-5">
             <StatusBar
               resume={activeResume}
-              onImport={() => setShowImport(true)}
+              onImport={() => openImportDialog('resume')}
               onExport={handleExport}
             />
           </div>
@@ -381,6 +506,7 @@ export default function App() {
       {/* Import dialog */}
       {showImport && (
         <ImportDialog
+          initialMode={importMode}
           onClose={() => setShowImport(false)}
           onImported={async () => {
             setShowImport(false);

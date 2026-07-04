@@ -17,13 +17,11 @@ export default function JobPreferenceSection({ data, onChange }: JobPreferencePr
         label={t('jobPref.positions')}
         tags={data.positions}
         onChange={(v) => onChange({ positions: v })}
-        placeholder={t('tag.placeholder')}
       />
       <TagListField
         label={t('jobPref.industries')}
         tags={data.industries}
         onChange={(v) => onChange({ industries: v })}
-        placeholder={t('tag.placeholder')}
       />
       <FormField
         label={t('jobPref.salaryRange')}

@@ -1,7 +1,7 @@
 export const zh = {
   // App
-  'app.name': 'FormPilot',
-  'app.subtitle': '个人资料 · 自动填写 · 智能匹配',
+  'app.name': 'SheetKiller',
+  'app.subtitle': '',
 
   // Sidebar
   'nav.basic': '基本信息',
@@ -30,7 +30,7 @@ export const zh = {
   // Basic info
   'basic.title': '基本信息',
   'basic.name': '姓名',
-  'basic.nameEn': '英文名',
+  'basic.nameEn': '英文姓名',
   'basic.phone': '手机号',
   'basic.email': '邮箱',
   'basic.gender': '性别',
@@ -39,6 +39,7 @@ export const zh = {
   'basic.ethnicity': '民族',
   'basic.politicalStatus': '政治面貌',
   'basic.location': '所在城市',
+  'basic.nativePlace': '籍贯/出生地',
   'basic.willingLocations': '意向城市',
   'basic.socialLinks': '社交链接',
   'basic.socialLinks.github': 'GitHub',
@@ -50,10 +51,10 @@ export const zh = {
   // Education
   'education.title': '教育经历',
   'education.school': '学校',
-  'education.schoolEn': '学校(英文)',
+  'education.schoolEn': '学校英文名称',
   'education.degree': '学位',
   'education.major': '专业',
-  'education.majorEn': '专业(英文)',
+  'education.majorEn': '专业英文名称',
   'education.gpa': 'GPA',
   'education.gpaScale': '满分',
   'education.startDate': '开始日期',
@@ -63,9 +64,9 @@ export const zh = {
   // Work
   'work.title': '工作经历',
   'work.company': '公司',
-  'work.companyEn': '公司(英文)',
+  'work.companyEn': '公司英文名称',
   'work.jobTitle': '职位',
-  'work.jobTitleEn': '职位(英文)',
+  'work.jobTitleEn': '职位英文名称',
   'work.department': '部门',
   'work.location': '工作地点',
   'work.startDate': '开始日期',

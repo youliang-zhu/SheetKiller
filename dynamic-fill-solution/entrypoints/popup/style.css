@@ -1,1 +1,36 @@
 @import "tailwindcss";
+
+:root {
+  --sk-ui-font: "Segoe UI Variable", "Segoe UI", ui-rounded, system-ui, sans-serif;
+  --sk-display-font: "Comic Neue", "Comic Sans MS", "Trebuchet MS", var(--sk-ui-font);
+  --sk-bg: #f4f7fc;
+  --sk-card: #ffffff;
+  --sk-primary: #1d4ed8;
+  --sk-primary-hover: #2563eb;
+  --sk-muted: #64748b;
+  --sk-text: #0f172a;
+  --sk-border: #e6ecf5;
+  --sk-success: #16a34a;
+  --sk-warning: #f59e0b;
+  --sk-error: #dc2626;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sk-ui-font);
+  background: var(--sk-bg);
+}
+
+button {
+  font: inherit;
+}
+
+button:focus-visible {
+  outline: 3px solid rgba(29, 78, 216, 0.22);
+  outline-offset: 2px;
+}
+
+.sk-display {
+  font-family: var(--sk-display-font);
+  letter-spacing: 0;
+}

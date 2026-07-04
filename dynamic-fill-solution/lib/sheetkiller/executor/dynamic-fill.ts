@@ -2,73 +2,182 @@ import { fillElement } from '@/lib/engine/heuristic/fillers';
 import type { FieldInventoryItem, FillPlanItem, SheetKillerReportItem } from '@/lib/sheetkiller/types';
 import { reportFromPlanAndVerification } from '@/lib/sheetkiller/report/report';
 import { isFinalSubmitElement } from '@/lib/sheetkiller/safety/submit-guard';
-import { verifyFieldValue } from '@/lib/sheetkiller/verifier/verifier';
+import { maskValue, readFieldDisplayValue, verifyFieldValue } from '@/lib/sheetkiller/verifier/verifier';
+
+export interface DynamicFillDebugItem {
+  fieldId: string;
+  label: string;
+  strategy: FillPlanItem['strategy'];
+  safety: FillPlanItem['safety'];
+  expectedMasked: string;
+  beforeMasked: string;
+  afterMasked: string;
+  status: SheetKillerReportItem['status'];
+  reason: string;
+  exception?: string;
+  element?: {
+    tagName: string;
+    type: string;
+    inputType: FieldInventoryItem['inputType'];
+    id: string;
+    name: string;
+    className: string;
+    placeholder: string;
+    ariaLabel: string;
+    role: string;
+    readOnly: boolean;
+    disabled: boolean;
+    optionsCount: number;
+  };
+}
 
 export interface DynamicFillExecution {
   reports: SheetKillerReportItem[];
+  debugItems: DynamicFillDebugItem[];
   filled: number;
+  needsInput: number;
   skipped: number;
   failed: number;
+}
+
+export interface DynamicFillOptions {
+  rescan?: () => FieldInventoryItem[];
 }
 
 export async function executeFillPlan(
   fields: FieldInventoryItem[],
   plan: FillPlanItem[],
+  options: DynamicFillOptions = {},
 ): Promise<DynamicFillExecution> {
-  const fieldById = new Map(fields.map((field) => [field.fieldId, field]));
   const reports: SheetKillerReportItem[] = [];
+  const debugItems: DynamicFillDebugItem[] = [];
+  let currentFields = fields;
 
   for (const item of plan) {
+    if (options.rescan) currentFields = options.rescan();
+    const fieldById = new Map(currentFields.map((field) => [field.fieldId, field]));
     const field = fieldById.get(item.fieldId);
     if (!field) {
-      reports.push({
+      const report: SheetKillerReportItem = {
         fieldId: item.fieldId,
         label: '',
         profileSource: item.profileSource,
         status: 'failed_to_fill',
         reason: 'Field no longer exists on the page.',
-      });
+      };
+      reports.push(report);
+      debugItems.push(buildDebugItem(item, undefined, report, '', '', ''));
+      continue;
+    }
+
+    if (item.safety === 'needs_user_input') {
+      const report = reportFromPlanAndVerification(item, field.label, false);
+      reports.push(report);
+      const before = readFieldDisplayValue(field);
+      debugItems.push(buildDebugItem(item, field, report, before, before, ''));
       continue;
     }
 
     if (item.strategy === 'skip' || item.safety.startsWith('skip_')) {
-      reports.push(reportFromPlanAndVerification(item, field.label, false));
+      const report = reportFromPlanAndVerification(item, field.label, false);
+      reports.push(report);
+      const before = readFieldDisplayValue(field);
+      debugItems.push(buildDebugItem(item, field, report, before, before, ''));
       continue;
     }
 
     if (isFinalSubmitElement(field.element)) {
-      reports.push({
+      const report: SheetKillerReportItem = {
         fieldId: field.fieldId,
         label: field.label,
         profileSource: item.profileSource,
         status: 'skipped_requires_human',
         reason: 'Final submit-like element was blocked by safety guard.',
-      });
+      };
+      reports.push(report);
+      const before = readFieldDisplayValue(field);
+      debugItems.push(buildDebugItem(item, field, report, before, before, ''));
       continue;
     }
 
+    const expectedValue = item.expectedValue || item.value || '';
     let filled = false;
+    const beforeValue = readFieldDisplayValue(field);
+    let exception = '';
     try {
-      filled = await fillElement(field.element, item.expectedValue, item.strategy);
-    } catch {
+      filled = await fillElement(field.element, expectedValue, item.strategy);
+    } catch (err) {
       filled = false;
+      exception = err instanceof Error ? err.message : String(err);
     }
+    const afterValue = readFieldDisplayValue(field);
 
     const verification = filled
       ? verifyFieldValue(
         { ...field, inputType: item.strategy === 'cascader-region' ? 'cascader-region' : field.inputType },
-        item.expectedValue,
+        expectedValue,
       )
       : undefined;
 
-    reports.push(reportFromPlanAndVerification(item, field.label, filled, verification));
+    const report = reportFromPlanAndVerification(item, field.label, filled, verification);
+    reports.push(report);
+    debugItems.push(buildDebugItem(item, field, report, beforeValue, afterValue, exception));
   }
 
   return {
     reports,
+    debugItems,
     filled: reports.filter((item) => item.status === 'filled_and_verified').length,
+    needsInput: reports.filter((item) => item.status === 'needs_user_input').length,
     skipped: reports.filter((item) => item.status.startsWith('skipped')).length,
     failed: reports.filter((item) => item.status === 'failed_to_fill' || item.status === 'filled_but_mismatch').length,
   };
 }
 
+function buildDebugItem(
+  plan: FillPlanItem,
+  field: FieldInventoryItem | undefined,
+  report: SheetKillerReportItem,
+  beforeValue: string,
+  afterValue: string,
+  exception: string,
+): DynamicFillDebugItem {
+  const sensitiveType = field?.sensitiveType;
+  const expected = plan.expectedValue || plan.value || '';
+  return {
+    fieldId: plan.fieldId,
+    label: field?.label || plan.label || '',
+    strategy: plan.strategy,
+    safety: plan.safety,
+    expectedMasked: maskValue(expected, sensitiveType),
+    beforeMasked: maskValue(beforeValue, sensitiveType),
+    afterMasked: maskValue(afterValue, sensitiveType),
+    status: report.status,
+    reason: report.reason,
+    exception: exception || undefined,
+    element: field ? snapshotElement(field) : undefined,
+  };
+}
+
+function snapshotElement(field: FieldInventoryItem): DynamicFillDebugItem['element'] {
+  const el = field.element;
+  const input = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+    ? el
+    : undefined;
+  const select = el instanceof HTMLSelectElement ? el : undefined;
+  const className = el instanceof HTMLElement ? el.className : '';
+  return {
+    tagName: el.tagName.toLowerCase(),
+    type: el instanceof HTMLInputElement ? el.type : '',
+    inputType: field.inputType,
+    id: el.getAttribute('id') ?? '',
+    name: el.getAttribute('name') ?? '',
+    className: typeof className === 'string' ? className : '',
+    placeholder: input?.placeholder ?? '',
+    ariaLabel: el.getAttribute('aria-label') ?? '',
+    role: el.getAttribute('role') ?? '',
+    readOnly: input?.readOnly ?? false,
+    disabled: input?.disabled ?? select?.disabled ?? false,
+    optionsCount: select?.options.length ?? field.options.length,
+  };
+}

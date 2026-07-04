@@ -63,12 +63,12 @@ export default function CandidateListField({
   };
 
   return (
-    <div className="mb-3">
-      <div className="flex items-center justify-between mb-1">
-        <label className="text-xs text-gray-500">{label}</label>
+    <div className="mb-4">
+      <div className="flex items-center justify-between mb-1.5">
+        <label className="text-xs font-semibold text-slate-600">{label}</label>
         {!adding && (
           <button
-            className="text-xs text-blue-400 hover:text-blue-300"
+            className="text-xs font-semibold text-slate-600 hover:text-slate-950"
             onClick={() => setAdding(true)}
           >
             {t('profile.candidate.add')}
@@ -77,53 +77,53 @@ export default function CandidateListField({
       </div>
 
       {candidates.length === 0 && !adding && (
-        <div className="text-xs text-gray-500 italic">
+        <div className="text-xs text-slate-400 italic">
           {t('profile.candidate.noCandidates')}
         </div>
       )}
 
       {candidates.length > 0 && (
-        <div className="space-y-1 bg-gray-900 border border-gray-800 rounded p-1">
+        <div className="space-y-1 bg-slate-50 border border-slate-200 rounded-3xl p-2">
           {candidates.map((c) => {
             const isEditing = editingId === c.id;
             const isDefault = def?.id === c.id;
             const isPinned = pinnedId === c.id;
             return (
-              <div key={c.id} className="flex items-start gap-2 text-xs py-1 px-1">
+              <div key={c.id} className="flex items-start gap-2 text-xs py-1.5 px-1">
                 {!isEditing && (
-                  <span className="text-gray-500 mt-0.5">{isDefault ? '●' : '○'}</span>
+                  <span className="text-slate-400 mt-0.5">{isDefault ? '●' : '○'}</span>
                 )}
                 <div className="flex-1 min-w-0">
                   {isEditing ? (
                     <div className="space-y-1">
                       <input
-                        className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1"
+                        className="w-full bg-white border border-slate-300 rounded-2xl px-3 py-2"
                         value={editValue} onChange={(e) => setEditValue(e.target.value)}
                         placeholder={valueInputPlaceholder}
                       />
                       <input
-                        className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1"
+                        className="w-full bg-white border border-slate-300 rounded-2xl px-3 py-2"
                         value={editLabel} onChange={(e) => setEditLabel(e.target.value)}
                         placeholder={t('profile.candidate.labelPlaceholder')}
                       />
                       <div className="flex gap-2">
-                        <button className="text-blue-400" onClick={() => submitEdit(c.id)}>
+                        <button className="text-slate-900 font-semibold" onClick={() => submitEdit(c.id)}>
                           {t('profile.candidate.save')}
                         </button>
-                        <button className="text-gray-400" onClick={() => setEditingId(null)}>
+                        <button className="text-slate-500" onClick={() => setEditingId(null)}>
                           {t('profile.candidate.cancel')}
                         </button>
                       </div>
                     </div>
                   ) : (
                     <>
-                      <div className="text-gray-200 break-all">{c.value}</div>
-                      {c.label && <div className="text-gray-500">{c.label}</div>}
+                      <div className="text-slate-900 break-all">{c.value}</div>
+                      {c.label && <div className="text-slate-500">{c.label}</div>}
                     </>
                   )}
                 </div>
                 {!isEditing && (
-                  <div className="flex gap-2 shrink-0 text-gray-400">
+                  <div className="flex gap-2 shrink-0 text-slate-400">
                     <button
                       title={isPinned ? 'Unpin' : 'Pin'}
                       onClick={() => onSetPin(isPinned ? null : c.id)}
@@ -132,7 +132,7 @@ export default function CandidateListField({
                     <button
                       title="Delete"
                       onClick={() => onDelete(c.id)}
-                      className="text-red-400 hover:text-red-300"
+                      className="text-rose-500 hover:text-rose-600"
                     >🗑</button>
                   </div>
                 )}
@@ -143,23 +143,23 @@ export default function CandidateListField({
       )}
 
       {adding && (
-        <div className="mt-1 space-y-1 bg-gray-900 border border-gray-800 rounded p-2">
+        <div className="mt-1 space-y-2 bg-slate-50 border border-slate-200 rounded-3xl p-3">
           <input
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs"
+            className="w-full bg-white border border-slate-300 rounded-2xl px-3 py-2 text-xs"
             value={addValue} onChange={(e) => setAddValue(e.target.value)}
             placeholder={valueInputPlaceholder}
             autoFocus
           />
           <input
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs"
+            className="w-full bg-white border border-slate-300 rounded-2xl px-3 py-2 text-xs"
             value={addLabel} onChange={(e) => setAddLabel(e.target.value)}
             placeholder={t('profile.candidate.labelPlaceholder')}
           />
           <div className="flex gap-2 text-xs">
-            <button className="text-blue-400" onClick={submitAdd}>
+            <button className="text-slate-900 font-semibold" onClick={submitAdd}>
               {t('profile.candidate.save')}
             </button>
-            <button className="text-gray-400" onClick={resetAdd}>
+            <button className="text-slate-500" onClick={resetAdd}>
               {t('profile.candidate.cancel')}
             </button>
           </div>
@@ -167,18 +167,18 @@ export default function CandidateListField({
       )}
 
       {Object.keys(domainPrefs).length > 0 && (
-        <div className="mt-2 pt-2 border-t border-gray-800 text-xs">
-          <div className="text-gray-500 mb-1">{t('candidate.dashboard.domainOverrides')}</div>
+        <div className="mt-3 pt-3 border-t border-slate-200 text-xs">
+          <div className="text-slate-500 mb-1">{t('candidate.dashboard.domainOverrides')}</div>
           <div className="space-y-1">
             {Object.entries(domainPrefs).map(([domain, candidateId]) => {
               const c = candidates.find((x) => x.id === candidateId);
               return (
                 <div key={domain} className="flex items-center justify-between">
-                  <span className="text-gray-300">
+                  <span className="text-slate-700">
                     {domain} → {c ? (c.label ? `${c.value} (${c.label})` : c.value) : '(missing)'}
                   </span>
                   <button
-                    className="text-red-400 hover:text-red-300"
+                    className="text-rose-500 hover:text-rose-600"
                     title="Clear"
                     onClick={() => onClearDomainPref(domain)}
                   >🗑</button>

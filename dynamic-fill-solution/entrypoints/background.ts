@@ -1,7 +1,15 @@
 // entrypoints/background.ts
 export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    handleMessage(message).then(sendResponse);
+    handleMessage(message)
+      .then(sendResponse)
+      .catch((err) => {
+        console.error('Background message failed:', err);
+        sendResponse({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     return true;
   });
 });
@@ -50,6 +58,89 @@ async function handleMessage(message: { type: string; [key: string]: unknown }) 
     }
     case 'GET_SETTINGS':
       return { ok: true, data: await getSettings() };
+    case 'CREATE_SHEETKILLER_PLAN': {
+      const { fields } = (message as unknown) as {
+        fields: unknown[];
+        pageUrl?: string;
+        pageDomain?: string;
+      };
+      const id = await getActiveResumeId();
+      if (!id) return { ok: false, error: 'No active profile selected.' };
+      const resume = await getResume(id);
+      if (!resume) return { ok: false, error: 'Active profile not found.' };
+      const settings = await getSettings();
+      if (!settings.apiProvider || !settings.apiKey) {
+        return { ok: false, error: 'Configure an AI provider and API key in Settings first.' };
+      }
+
+      const { factsFromResume } = await import('@/lib/sheetkiller/profile/facts');
+      const { planWithLlm } = await import('@/lib/sheetkiller/planner/llm-planner');
+      const providerDefaults = {
+        openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5' },
+        deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+      } as const;
+      const defaults = providerDefaults[settings.apiProvider];
+      const plan = await planWithLlm(
+        fields as never,
+        factsFromResume(resume),
+        {
+          apiKey: settings.apiKey,
+          baseUrl: settings.apiBaseUrl || defaults.baseUrl,
+          model: settings.apiModel || defaults.model,
+        },
+      );
+      return {
+        ok: true,
+        data: {
+          plan,
+          summary: {
+            total: plan.length,
+            fillable: plan.filter((item) => (
+              !item.safety.startsWith('skip_') && item.safety !== 'needs_user_input'
+            )).length,
+            needsInput: plan.filter((item) => item.safety === 'needs_user_input').length,
+            skipped: plan.filter((item) => item.safety.startsWith('skip_')).length,
+            review: plan.filter((item) => (
+              item.reviewRequired
+              || item.safety === 'fill_requires_review'
+              || item.safety === 'needs_user_input'
+            )).length,
+          },
+        },
+      };
+    }
+    case 'AI_COMPLETE_PROFILE': {
+      const { resumeText } = (message as unknown) as { resumeText?: string };
+      if (!resumeText?.trim()) return { ok: false, error: 'Paste resume text first.' };
+
+      const id = await getActiveResumeId();
+      if (!id) return { ok: false, error: 'No active profile selected.' };
+      const resume = await getResume(id);
+      if (!resume) return { ok: false, error: 'Active profile not found.' };
+
+      const settings = await getSettings();
+      if (!settings.apiProvider || !settings.apiKey) {
+        return { ok: false, error: 'Configure an AI provider and API key first.' };
+      }
+
+      const providerDefaults = {
+        openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5' },
+        deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+      } as const;
+      const defaults = providerDefaults[settings.apiProvider];
+      const { completeProfileWithAi, mergeAiProfileCompletion } = await import('@/lib/import/ai-profile-completer');
+      const completion = await completeProfileWithAi(resumeText, settings, defaults);
+      const { patch, filledCount } = mergeAiProfileCompletion(resume, completion);
+      await updateResume(id, patch);
+
+      return {
+        ok: true,
+        data: {
+          filledCount,
+          needsReview: filledCount,
+        },
+      };
+    }
     case 'SAVE_TOOLBAR_POSITION': {
       const position = message.position as { x: number; y: number };
       await updateSettings({ toolbarPosition: position });

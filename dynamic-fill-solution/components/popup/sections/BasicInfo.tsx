@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React from 'react';
 import type { BasicInfo } from '@/lib/storage/types';
+import type { FieldCandidate } from '@/lib/capture/candidate';
+import { resolveCandidate } from '@/lib/capture/candidate';
 import { FormField, TagListField } from '../FormField';
-import CandidateListField from '../CandidateListField';
 import { useI18n } from '@/lib/i18n';
 
 interface BasicInfoProps {
@@ -10,16 +11,8 @@ interface BasicInfoProps {
   refreshFromStorage: () => Promise<void>;
 }
 
-export default function BasicInfoSection({ data, onChange, refreshFromStorage }: BasicInfoProps) {
+export default function BasicInfoSection({ data, onChange }: BasicInfoProps) {
   const { t } = useI18n();
-  const [profileDomainPrefs, setProfileDomainPrefs] = useState<Record<string, Record<string, string>>>({});
-
-  const refreshPrefs = useCallback(async () => {
-    const res = await chrome.runtime.sendMessage({ type: 'LIST_PROFILE_DOMAIN_PREFS' });
-    setProfileDomainPrefs(res?.ok ? (res.data as Record<string, Record<string, string>>) : {});
-  }, []);
-
-  useEffect(() => { refreshPrefs(); }, [refreshPrefs]);
 
   const updateSocialLink = (key: string, value: string) => {
     const updated = { ...data.socialLinks };
@@ -31,76 +24,53 @@ export default function BasicInfoSection({ data, onChange, refreshFromStorage }:
     onChange({ socialLinks: updated });
   };
 
-  const withRefresh = async (msg: Record<string, unknown>) => {
-    await chrome.runtime.sendMessage(msg);
-    await refreshFromStorage();
+  const contactValue = (items: FieldCandidate[], pinnedId: string | null) =>
+    resolveCandidate(items, pinnedId, '', {})?.value ?? '';
+
+  const updateContact = (
+    key: 'phone' | 'email',
+    pinnedKey: 'phonePinnedId' | 'emailPinnedId',
+    value: string,
+  ) => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      onChange({ [key]: [], [pinnedKey]: null } as Partial<BasicInfo>);
+      return;
+    }
+    const existing = resolveCandidate(data[key], data[pinnedKey], '', {}) ?? data[key][0];
+    const now = Date.now();
+    const candidate: FieldCandidate = {
+      id: existing?.id ?? crypto.randomUUID(),
+      value: trimmed,
+      label: '',
+      hitCount: existing?.hitCount ?? 0,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      lastUrl: existing?.lastUrl ?? '(manual)',
+    };
+    onChange({ [key]: [candidate], [pinnedKey]: candidate.id } as Partial<BasicInfo>);
   };
 
   return (
     <div>
-      <div className="grid grid-cols-2 gap-x-3">
+      <div className="grid gap-x-4 sm:grid-cols-2">
         <FormField
           label={t('basic.name')}
           value={data.name}
           onChange={(v) => onChange({ name: v })}
-          placeholder="张三"
         />
         <FormField
-          label={t('basic.nameEn')}
-          value={data.nameEn}
-          onChange={(v) => onChange({ nameEn: v })}
-          placeholder="San Zhang"
+          label={t('basic.phone')}
+          value={contactValue(data.phone, data.phonePinnedId)}
+          onChange={(v) => updateContact('phone', 'phonePinnedId', v)}
+        />
+        <FormField
+          label={t('basic.email')}
+          value={contactValue(data.email, data.emailPinnedId)}
+          onChange={(v) => updateContact('email', 'emailPinnedId', v)}
         />
       </div>
-      <CandidateListField
-        label={t('basic.phone')}
-        candidates={data.phone}
-        pinnedId={data.phonePinnedId}
-        domainPrefs={profileDomainPrefs['basic.phone'] ?? {}}
-        valueInputPlaceholder={t('profile.candidate.valuePlaceholder.phone')}
-        onAdd={async (value, label) => {
-          await withRefresh({ type: 'ADD_PROFILE_CANDIDATE', resumePath: 'basic.phone', value, label });
-        }}
-        onUpdate={async (id, value, label) => {
-          await withRefresh({ type: 'UPDATE_PROFILE_CANDIDATE', resumePath: 'basic.phone', candidateId: id, value, label });
-        }}
-        onDelete={async (id) => {
-          await withRefresh({ type: 'DELETE_PROFILE_CANDIDATE', resumePath: 'basic.phone', candidateId: id });
-          await refreshPrefs();
-        }}
-        onSetPin={async (id) => {
-          await withRefresh({ type: 'SET_PROFILE_PIN', resumePath: 'basic.phone', candidateId: id });
-        }}
-        onClearDomainPref={async (domain) => {
-          await chrome.runtime.sendMessage({ type: 'CLEAR_PROFILE_DOMAIN_PREF', resumePath: 'basic.phone', domain });
-          await refreshPrefs();
-        }}
-      />
-      <CandidateListField
-        label={t('basic.email')}
-        candidates={data.email}
-        pinnedId={data.emailPinnedId}
-        domainPrefs={profileDomainPrefs['basic.email'] ?? {}}
-        valueInputPlaceholder={t('profile.candidate.valuePlaceholder.email')}
-        onAdd={async (value, label) => {
-          await withRefresh({ type: 'ADD_PROFILE_CANDIDATE', resumePath: 'basic.email', value, label });
-        }}
-        onUpdate={async (id, value, label) => {
-          await withRefresh({ type: 'UPDATE_PROFILE_CANDIDATE', resumePath: 'basic.email', candidateId: id, value, label });
-        }}
-        onDelete={async (id) => {
-          await withRefresh({ type: 'DELETE_PROFILE_CANDIDATE', resumePath: 'basic.email', candidateId: id });
-          await refreshPrefs();
-        }}
-        onSetPin={async (id) => {
-          await withRefresh({ type: 'SET_PROFILE_PIN', resumePath: 'basic.email', candidateId: id });
-        }}
-        onClearDomainPref={async (domain) => {
-          await chrome.runtime.sendMessage({ type: 'CLEAR_PROFILE_DOMAIN_PREF', resumePath: 'basic.email', domain });
-          await refreshPrefs();
-        }}
-      />
-      <div className="grid grid-cols-2 gap-x-3">
+      <div className="grid gap-x-4 sm:grid-cols-2">
         <FormField
           label={t('basic.gender')}
           value={data.gender}
@@ -132,31 +102,32 @@ export default function BasicInfoSection({ data, onChange, refreshFromStorage }:
           value={data.location}
           onChange={(v) => onChange({ location: v })}
         />
+        <FormField
+          label={t('basic.nativePlace')}
+          value={data.nativePlace ?? ''}
+          onChange={(v) => onChange({ nativePlace: v })}
+        />
       </div>
       <TagListField
         label={t('basic.willingLocations')}
         tags={data.willingLocations}
         onChange={(v) => onChange({ willingLocations: v })}
-        placeholder={t('tag.placeholder')}
       />
-      <p className="text-xs text-gray-500 mb-2">{t('basic.socialLinks')}</p>
+      <p className="mb-3 text-xs font-semibold text-slate-500">{t('basic.socialLinks')}</p>
       <FormField
         label={t('basic.socialLinks.github')}
         value={data.socialLinks['github'] ?? ''}
         onChange={(v) => updateSocialLink('github', v)}
-        placeholder="https://github.com/username"
       />
       <FormField
         label={t('basic.socialLinks.linkedin')}
         value={data.socialLinks['linkedin'] ?? ''}
         onChange={(v) => updateSocialLink('linkedin', v)}
-        placeholder="https://linkedin.com/in/username"
       />
       <FormField
         label={t('basic.socialLinks.portfolio')}
         value={data.socialLinks['portfolio'] ?? ''}
         onChange={(v) => updateSocialLink('portfolio', v)}
-        placeholder="https://yoursite.com"
       />
     </div>
   );

@@ -28,6 +28,15 @@ export function reportFromPlanAndVerification(
       reason: plan.reason || 'Sensitive or upload field skipped.',
     };
   }
+  if (plan.safety === 'needs_user_input') {
+    return {
+      fieldId: plan.fieldId,
+      label,
+      profileSource: plan.profileSource,
+      status: 'needs_user_input',
+      reason: plan.reason || 'No matching local profile value was available.',
+    };
+  }
   if (plan.safety === 'skip_generated' || plan.safety === 'skip_unknown') {
     return {
       fieldId: plan.fieldId,
@@ -82,6 +91,7 @@ export function summarizeReport(items: SheetKillerReportItem[]): Record<SheetKil
     'filled_and_verified',
     'filled_but_mismatch',
     'filled_but_unverifiable',
+    'needs_user_input',
     'skipped_low_confidence',
     'skipped_sensitive',
     'skipped_requires_human',
@@ -92,4 +102,3 @@ export function summarizeReport(items: SheetKillerReportItem[]): Record<SheetKil
     items.filter((item) => item.status === status).length,
   ])) as Record<SheetKillerReportItem['status'], number>;
 }
-

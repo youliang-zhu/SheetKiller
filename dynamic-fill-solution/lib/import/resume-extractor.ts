@@ -237,8 +237,13 @@ export function toResume(extracted: ExtractedResume, id: string, resumeName: str
     },
     education: extracted.education.map((e) => ({
       ...base.education[0] ?? {
-        school: '', schoolEn: '', degree: '', major: '', majorEn: '',
-        gpa: '', gpaScale: '', startDate: '', endDate: '', honors: [],
+        school: '', schoolEn: '', schoolLocation: '', department: '',
+        degree: '', educationLevel: '', educationType: '', majorCategory: '',
+        major: '', majorEn: '', majorRank: '', gpa: '', gpaScale: '',
+        startDate: '', endDate: '', isExchange: '', isJointProgram: '',
+        hasNationalScholarship: '', isNationalKeyLab: '', advisor: '',
+        laboratory: '', researchDirection: '', studentId: '',
+        minorOrSecondMajor: '', honors: [],
       },
       school: e.school,
       degree: e.degree,
