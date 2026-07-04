@@ -100,12 +100,22 @@ export async function executeFillPlan(
       continue;
     }
 
-    const expectedValue = item.expectedValue || item.value || '';
+    const expectedValue = adjustedExpectedValue(field, item);
+    const effectiveItem = expectedValue === (item.expectedValue || item.value || '')
+      ? item
+      : {
+          ...item,
+          expectedValue,
+          value: expectedValue,
+          profileSource: item.profileSource || 'basic.phoneCountryCode',
+          sourcePath: item.sourcePath || 'basic.phoneCountryCode',
+          reason: `${item.reason || 'Adjusted grouped phone field.'} Phone country-code subfield was filled from the current page value.`,
+        };
     let filled = false;
     const beforeValue = readFieldDisplayValue(field);
     let exception = '';
     try {
-      filled = await fillElement(field.element, expectedValue, item.strategy);
+      filled = await fillElement(field.element, expectedValue, effectiveItem.strategy);
     } catch (err) {
       filled = false;
       exception = err instanceof Error ? err.message : String(err);
@@ -119,9 +129,9 @@ export async function executeFillPlan(
       )
       : undefined;
 
-    const report = reportFromPlanAndVerification(item, field.label, filled, verification);
+    const report = reportFromPlanAndVerification(effectiveItem, field.label, filled, verification);
     reports.push(report);
-    debugItems.push(buildDebugItem(item, field, report, beforeValue, afterValue, exception));
+    debugItems.push(buildDebugItem(effectiveItem, field, report, beforeValue, afterValue, exception));
   }
 
   return {
@@ -132,6 +142,27 @@ export async function executeFillPlan(
     skipped: reports.filter((item) => item.status.startsWith('skipped')).length,
     failed: reports.filter((item) => item.status === 'failed_to_fill' || item.status === 'filled_but_mismatch').length,
   };
+}
+
+function adjustedExpectedValue(field: FieldInventoryItem, item: FillPlanItem): string {
+  const expected = item.expectedValue || item.value || '';
+  if (!expected) return expected;
+  if (item.sourcePath !== 'basic.phone' && item.profileSource !== 'basic.phone') return expected;
+  if (!/^\+?\d[\d\s-]{6,}$/.test(expected)) return expected;
+  if (!['select', 'custom-select', 'cascader-region'].includes(item.strategy)) return expected;
+
+  const visibleText = [
+    field.label,
+    field.placeholder,
+    field.ariaLabel,
+    field.name,
+    field.id,
+    field.context,
+    field.currentValue,
+    readFieldDisplayValue(field),
+  ].filter(Boolean).join(' ');
+  if (!/(\+86|86|区号|国家码|国家\/地区|country\s*code)/i.test(visibleText)) return expected;
+  return '+86';
 }
 
 function buildDebugItem(

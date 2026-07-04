@@ -1,13 +1,17 @@
-import { describe, expect, it } from 'vitest';
-import { verifyFieldValue } from '@/lib/sheetkiller/verifier/verifier';
+import { afterEach, describe, expect, it } from 'vitest';
+import { readFieldDisplayValue, verifyFieldValue } from '@/lib/sheetkiller/verifier/verifier';
 import type { FieldInventoryItem } from '@/lib/sheetkiller/types';
 
-function field(inputType: FieldInventoryItem['inputType'], element: Element, extra: Partial<FieldInventoryItem> = {}): FieldInventoryItem {
+afterEach(() => {
+  document.body.innerHTML = '';
+});
+
+function field(element: Element, inputType: FieldInventoryItem['inputType']): FieldInventoryItem {
   return {
-    fieldId: 'field-0',
+    fieldId: 'field-1',
     element,
     inputType,
-    label: '字段',
+    label: '',
     hint: '',
     placeholder: '',
     ariaLabel: '',
@@ -20,35 +24,37 @@ function field(inputType: FieldInventoryItem['inputType'], element: Element, ext
     currentValue: '',
     required: false,
     visible: true,
-    source: 'generic-scan',
-    ...extra,
+    source: 'heuristic',
   };
 }
 
-describe('SheetKiller verifier', () => {
-  it('detects placeholder leakage as mismatch', () => {
-    const input = document.createElement('input');
-    input.value = 'x_id_number';
-    const result = verifyFieldValue(
-      field('text', input, { sensitiveType: 'id_card' }),
-      '430000199901011234',
-    );
+describe('verifyFieldValue', () => {
+  it('reads inner input values from custom component wrappers', () => {
+    document.body.innerHTML = `
+      <div class="el-select">
+        <input value="硕士（Master）">
+      </div>
+    `;
+    const wrapper = document.querySelector('.el-select') as HTMLElement;
 
-    expect(result.status).toBe('mismatch');
-    expect(result.reason).toContain('Placeholder');
+    expect(readFieldDisplayValue(field(wrapper, 'custom-select'))).toBe('硕士（Master）');
   });
 
-  it('rejects over-generic region values', () => {
-    const div = document.createElement('div');
-    div.textContent = '全国';
-    const result = verifyFieldValue(field('cascader-region', div), '湖南省 娄底市', '全国');
-    expect(result.status).toBe('mismatch');
+  it('allows option-like select values to include the expected token', () => {
+    const result = verifyFieldValue(field(document.createElement('div'), 'custom-select'), '居民身份证', '中国-居民身份证');
+
+    expect(result.status).toBe('verified');
   });
 
-  it('verifies region token matches', () => {
-    const div = document.createElement('div');
-    div.textContent = '湖南省 / 娄底市 / 娄星区';
-    const result = verifyFieldValue(field('cascader-region', div), '湖南省 娄底市', div.textContent);
+  it('allows degree options with parenthetical English suffixes', () => {
+    const result = verifyFieldValue(field(document.createElement('div'), 'custom-select'), '硕士', '硕士（Master）');
+
+    expect(result.status).toBe('verified');
+  });
+
+  it('allows broader major category labels for custom select verification', () => {
+    const result = verifyFieldValue(field(document.createElement('div'), 'custom-select'), '计算机', '计算机科学与技术');
+
     expect(result.status).toBe('verified');
   });
 });

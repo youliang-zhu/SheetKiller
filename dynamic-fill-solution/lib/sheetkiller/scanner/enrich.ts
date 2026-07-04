@@ -1,4 +1,5 @@
 import type { FieldInventoryItem } from '@/lib/sheetkiller/types';
+import { cssEscape } from '@/lib/capture/css-escape';
 
 const SCANNABLE_SELECTOR = [
   'input:not([type="hidden"]):not([type="submit"]):not([type="reset"]):not([type="button"]):not([type="image"])',
@@ -31,7 +32,7 @@ function isVisible(el: HTMLElement): boolean {
 
 function findLabel(el: HTMLElement): string {
   if (el.id) {
-    const label = el.ownerDocument.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+    const label = el.ownerDocument.querySelector(`label[for="${cssEscape(el.id)}"]`);
     if (label?.textContent) return normalizeText(label.textContent);
   }
   const parentLabel = el.closest('label');
@@ -51,6 +52,9 @@ function findLabel(el: HTMLElement): string {
     const labelCell = cells.slice(0, index).reverse().find((candidate) => textWithoutControls(candidate));
     if (labelCell) return textWithoutControls(labelCell);
   }
+  const formItem = el.closest('.el-form-item, .ant-form-item');
+  const formLabel = formItem?.querySelector('label, .ant-form-item-label');
+  if (formLabel?.textContent) return normalizeText(formLabel.textContent);
   return '';
 }
 
@@ -90,6 +94,10 @@ function getOptions(el: HTMLElement): string[] {
 }
 
 function currentValue(el: HTMLElement): string {
+  const innerInput = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+    ? undefined
+    : el.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea');
+  if (innerInput) return innerInput.value;
   if (el instanceof HTMLInputElement && el.type === 'file') {
     return Array.from(el.files ?? []).map((file) => file.name).join(', ');
   }
@@ -98,7 +106,39 @@ function currentValue(el: HTMLElement): string {
   return normalizeText(el.textContent ?? '');
 }
 
-function inferInputType(el: HTMLElement): FieldInventoryItem['inputType'] {
+function hasElementPlusAncestor(el: HTMLElement, token: string): boolean {
+  return Boolean(el.closest(`[class*="${token}"]`));
+}
+
+function inferInputType(el: HTMLElement, textForType = ''): FieldInventoryItem['inputType'] {
+  const normalized = normalizeText(textForType);
+  const placeholder = el.getAttribute('placeholder') ?? '';
+  const role = el.getAttribute('role') ?? '';
+
+  if (
+    hasElementPlusAncestor(el, 'el-date-editor')
+    || (role === 'combobox' && /日期|时间|起止|生日|出生/.test(normalized))
+  ) {
+    return 'date';
+  }
+
+  if (
+    hasElementPlusAncestor(el, 'el-cascader')
+    || (/籍贯|出生地|学校所在地|户籍|所在地/.test(normalized) && /请选择/.test(normalized + placeholder))
+  ) {
+    return 'cascader-region';
+  }
+
+  if (
+    hasElementPlusAncestor(el, 'el-select')
+    || hasElementPlusAncestor(el, 'el-autocomplete')
+    || role === 'combobox'
+    || (/请选择/.test(placeholder) && el instanceof HTMLInputElement)
+    || (/学校名称|专业名称|专业$/.test(normalized) && /请输入|请先选择/.test(placeholder))
+  ) {
+    return 'custom-select';
+  }
+
   if (el instanceof HTMLTextAreaElement) return 'textarea';
   if (el instanceof HTMLSelectElement) return 'select';
   if (el instanceof HTMLInputElement) {
@@ -130,7 +170,11 @@ export function scanEnrichedFields(doc: Document = document): FieldInventoryItem
   let index = 0;
   for (const el of Array.from(doc.querySelectorAll<HTMLElement>(SCANNABLE_SELECTOR))) {
     if (!isVisible(el)) continue;
-    const inputType = inferInputType(el);
+    const ownerCombobox = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+      ? el.closest<HTMLElement>('[role="combobox"]')
+      : null;
+    if (ownerCombobox && ownerCombobox !== el) continue;
+
     const label = findLabel(el);
     const root = findContextRoot(el);
     const context = textWithoutControls(root);
@@ -142,6 +186,7 @@ export function scanEnrichedFields(doc: Document = document): FieldInventoryItem
       el.getAttribute('name') ?? '',
       el.getAttribute('id') ?? '',
     ].join(' ');
+    const inputType = inferInputType(el, textForSafety);
     fields.push({
       fieldId: `field-${index++}`,
       index: index - 1,

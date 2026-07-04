@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { Settings } from '@/lib/storage/types';
-import { getSettings, updateSettings } from '@/lib/storage/settings-store';
+import { getSettings } from '@/lib/storage/settings-store';
 import { useI18n } from '@/lib/i18n';
 
 export type ProfileEditorMode = 'manual' | 'import' | 'ai';
@@ -32,10 +32,14 @@ const modeMeta: Record<ProfileEditorMode, { zh: string; en: string; hintZh: stri
   ai: {
     zh: 'AI 完善资料',
     en: 'AI Improve Profile',
-    hintZh: '选择供应商并填写 API key 后，让 AI 抽取资料并直接填入表单。',
-    hintEn: 'Choose a provider and API key, then let AI fill the profile for review.',
+    hintZh: '粘贴简历或个人介绍，让 AI 抽取资料并直接填入表单。',
+    hintEn: 'Paste resume text or notes, then let AI fill the profile for review.',
   },
 };
+
+function openApiSettings() {
+  chrome.tabs.create({ url: chrome.runtime.getURL('/settings.html') });
+}
 
 export default function ProfileModeWorkbench({
   mode,
@@ -49,7 +53,6 @@ export default function ProfileModeWorkbench({
 }: ProfileModeWorkbenchProps) {
   const { locale, t } = useI18n();
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [aiText, setAiText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -66,17 +69,27 @@ export default function ProfileModeWorkbench({
       : saveStatus === 'saved'
         ? t('status.saved')
         : '已就绪';
+  const apiConfigured = Boolean(settings?.apiProvider && settings.apiKey);
+  const apiProviderLabel =
+    settings?.apiProvider === 'openai'
+      ? 'OpenAI'
+      : settings?.apiProvider === 'deepseek'
+        ? 'DeepSeek'
+        : '未选择';
 
   useEffect(() => {
-    getSettings().then(setSettings);
+    let alive = true;
+    async function loadSettings() {
+      const next = await getSettings();
+      if (alive) setSettings(next);
+    }
+    loadSettings();
+    window.addEventListener('focus', loadSettings);
+    return () => {
+      alive = false;
+      window.removeEventListener('focus', loadSettings);
+    };
   }, []);
-
-  async function handleSettingsChange(patch: Partial<Settings>) {
-    if (!settings) return;
-    const next = { ...settings, ...patch };
-    setSettings(next);
-    await updateSettings(patch);
-  }
 
   async function runImportText() {
     setBusy(true);
@@ -202,70 +215,49 @@ export default function ProfileModeWorkbench({
         <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
           <div className="grid gap-3 lg:grid-cols-2">
             <div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">
-                    {t('settings.apiProvider')}
-                  </label>
-                  <select
-                    className="sk-input"
-                    value={settings?.apiProvider ?? ''}
-                    onChange={(event) =>
-                      handleSettingsChange({ apiProvider: event.target.value as Settings['apiProvider'] })
-                    }
+              <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold text-slate-500">AI 配置状态</div>
+                    <div className="mt-1 text-base font-bold text-slate-950">
+                      {apiConfigured ? '已配置 API Key' : '未配置 API Key'}
+                    </div>
+                  </div>
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                      apiConfigured
+                        ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                        : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
+                    }`}
                   >
-                    <option value="">{t('settings.apiProvider.none')}</option>
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="openai">OpenAI</option>
-                  </select>
+                    {apiConfigured ? '可使用' : '需配置'}
+                  </span>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">
-                    {t('settings.apiKey')}
-                  </label>
-                  <input
-                    type="password"
-                    className="sk-input"
-                    value={settings?.apiKey ?? ''}
-                    onChange={(event) => handleSettingsChange({ apiKey: event.target.value })}
-                    placeholder="sk-..."
-                  />
+                <div className="mt-3 grid gap-2 text-xs text-slate-500">
+                  <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2">
+                    <span>供应商</span>
+                    <span className="font-semibold text-slate-800">{apiProviderLabel}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2">
+                    <span>API Key</span>
+                    <span className="font-semibold text-slate-800">{settings?.apiKey ? '已保存' : '未保存'}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2">
+                    <span>模型</span>
+                    <span className="font-semibold text-slate-800">{settings?.apiModel || '使用默认值'}</span>
+                  </div>
                 </div>
+                <p className="mt-3 text-xs leading-5 text-slate-500">
+                  API Key、Base URL 和模型统一在独立设置页维护；资料编辑页只处理个人资料内容。
+                </p>
+                <button
+                  type="button"
+                  onClick={openApiSettings}
+                  className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-[#f8fbff] hover:text-slate-950"
+                >
+                  打开 API 设置
+                </button>
               </div>
-              <p className="mt-2 text-xs leading-5 text-slate-500">
-                {isZh
-                  ? 'API key 保存在本机浏览器会话中；点击 AI 完善时，简历文本会发送给你选择的供应商用于结构化提取。'
-                  : 'The API key stays in the local browser session. Resume text is sent to your chosen provider only when AI Improve runs.'}
-              </p>
-              <button
-                type="button"
-                onClick={() => setAdvancedOpen((value) => !value)}
-                className="mt-3 text-xs font-semibold text-slate-600 hover:text-slate-950"
-              >
-                {advancedOpen ? '收起高级设置' : '高级设置'}
-              </button>
-              {advancedOpen && (
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold text-slate-600">接口地址</label>
-                    <input
-                      className="sk-input"
-                      value={settings?.apiBaseUrl ?? ''}
-                      onChange={(event) => handleSettingsChange({ apiBaseUrl: event.target.value })}
-                      placeholder={settings?.apiProvider === 'deepseek' ? 'https://api.deepseek.com/v1' : 'https://api.openai.com/v1'}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold text-slate-600">模型</label>
-                    <input
-                      className="sk-input"
-                      value={settings?.apiModel ?? ''}
-                      onChange={(event) => handleSettingsChange({ apiModel: event.target.value })}
-                      placeholder={settings?.apiProvider === 'deepseek' ? 'deepseek-chat' : 'gpt-5.5'}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
             <div>
               <label className="mb-2 block text-xs font-semibold text-slate-600">
@@ -280,7 +272,7 @@ export default function ProfileModeWorkbench({
               />
               <button
                 type="button"
-                disabled={busy || !aiText.trim() || !settings?.apiProvider || !settings?.apiKey}
+                disabled={busy || !aiText.trim() || !apiConfigured}
                 onClick={runAiImprove}
                 className="sk-primary-button mt-3"
               >

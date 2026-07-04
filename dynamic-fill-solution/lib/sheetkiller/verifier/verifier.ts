@@ -4,6 +4,22 @@ function normalize(value: string): string {
   return value.replace(/\s+/g, '').trim().toLowerCase();
 }
 
+function normalizeOptionText(value: string): string {
+  return normalize(value)
+    .replace(/[()（）[\]【】{}<>《》,，、/\\|:：;；.\-_]/g, '')
+    .replace(/\b(master|bachelor|phd|doctor|fulltime|parttime)\b/g, '')
+    .replace(/省|市|区|县|特别行政区|自治区|壮族|回族|维吾尔/g, '');
+}
+
+function optionLikeMatches(expected: string, actual: string): boolean {
+  const expectedNorm = normalizeOptionText(expected);
+  const actualNorm = normalizeOptionText(actual);
+  if (!expectedNorm || !actualNorm) return false;
+  return actualNorm === expectedNorm
+    || actualNorm.includes(expectedNorm)
+    || expectedNorm.includes(actualNorm);
+}
+
 export function maskValue(value: string, kind?: FieldInventoryItem['sensitiveType']): string {
   if (!value) return '';
   if (kind === 'email') {
@@ -26,6 +42,15 @@ export function readFieldDisplayValue(field: FieldInventoryItem): string {
   }
   if (el instanceof HTMLTextAreaElement) return el.value;
   if (el instanceof HTMLSelectElement) return el.selectedOptions[0]?.textContent?.trim() ?? el.value;
+  const innerInput = el.querySelector<HTMLInputElement>('input');
+  if (innerInput) {
+    if (innerInput.type === 'checkbox' || innerInput.type === 'radio') return innerInput.checked ? 'true' : 'false';
+    return innerInput.value;
+  }
+  const innerTextarea = el.querySelector<HTMLTextAreaElement>('textarea');
+  if (innerTextarea) return innerTextarea.value;
+  const innerSelect = el.querySelector<HTMLSelectElement>('select');
+  if (innerSelect) return innerSelect.selectedOptions[0]?.textContent?.trim() ?? innerSelect.value;
   return el.textContent?.trim() ?? '';
 }
 
@@ -66,6 +91,7 @@ export function verifyFieldValue(
   let matched = false;
   if (field.inputType === 'date') matched = dateComparable(expectedValue) === dateComparable(actualValue);
   else if (field.inputType === 'cascader-region') matched = regionMatches(expectedValue, actualValue);
+  else if (field.inputType === 'select' || field.inputType === 'custom-select') matched = optionLikeMatches(expectedValue, actualValue);
   else matched = normalize(expectedValue) === normalize(actualValue);
 
   return {
@@ -76,4 +102,3 @@ export function verifyFieldValue(
     reason: matched ? 'Expected value matched page value.' : 'Expected value did not match page value.',
   };
 }
-

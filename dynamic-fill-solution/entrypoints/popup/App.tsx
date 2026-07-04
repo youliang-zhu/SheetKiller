@@ -20,8 +20,15 @@ import {
   type DebugRunExtensionInfo,
   type DebugRunPage,
 } from '@/lib/sheetkiller/debug/debug-run-store';
+import {
+  getWorkflowSnapshot,
+  isStaleRunningSnapshot,
+  saveWorkflowSnapshot,
+  snapshotMatchesTab,
+} from '@/lib/sheetkiller/workflow/workflow-state-store';
 
 type FlowState = 'idle' | 'planning' | 'planned' | 'preview' | 'filling' | 'done' | 'error';
+type PlanPhase = 'idle' | 'connect' | 'scan' | 'ai' | 'build';
 
 interface PlanResponse {
   plan: FillPlanItem[];
@@ -37,6 +44,41 @@ interface PlanResponse {
 function openDashboard(hash?: string) {
   const url = chrome.runtime.getURL('/dashboard.html') + (hash ? '#' + hash : '');
   chrome.tabs.create({ url });
+}
+
+function openApiSettings() {
+  chrome.tabs.create({ url: chrome.runtime.getURL('/settings.html') });
+}
+
+const PLAN_PHASES: Array<{
+  id: Exclude<PlanPhase, 'idle'>;
+  title: string;
+  description: string;
+}> = [
+  {
+    id: 'connect',
+    title: '连接当前页面',
+    description: '确认扩展可以访问当前网申页面。',
+  },
+  {
+    id: 'scan',
+    title: '识别可填写区域',
+    description: '读取输入框、下拉框、日期和文本区域。',
+  },
+  {
+    id: 'ai',
+    title: 'AI 核对资料',
+    description: '把页面字段和本地资料进行匹配。',
+  },
+  {
+    id: 'build',
+    title: '生成填写计划',
+    description: '整理可填写、待补充和需复核的项目。',
+  },
+];
+
+function planPhaseIndex(phase: PlanPhase): number {
+  return PLAN_PHASES.findIndex((item) => item.id === phase);
 }
 
 function pageFromTab(tab: chrome.tabs.Tab): DebugRunPage {
@@ -88,6 +130,9 @@ function humanizeError(err: unknown): string {
   if (/no active tab/i.test(message)) return '未找到当前标签页。';
   if (/scan failed/i.test(message)) return '扫描页面失败，请刷新页面后重试。';
   if (/plan generation failed/i.test(message)) return '生成填写计划失败，请检查资料和 AI 设置。';
+  if (/configure an ai provider|api key|no active profile/i.test(message)) {
+    return '请先在「API 设置」中配置供应商和 API Key，再重新扫描。';
+  }
   if (/fill failed/i.test(message)) return '自动填写失败，请检查页面后重试。';
   return message;
 }
@@ -160,6 +205,8 @@ export default function App() {
   const [error, setError] = useState<string>('');
   const [scannedCount, setScannedCount] = useState(0);
   const [debugRunId, setDebugRunId] = useState<string | null>(null);
+  const [planPhase, setPlanPhase] = useState<PlanPhase>('idle');
+  const [restoredWorkflow, setRestoredWorkflow] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -169,25 +216,83 @@ export default function App() {
         ? all.find((r) => r.meta.id === storedId)!
         : all[0];
       setActiveResume(resolved);
+
+      try {
+        const [tab, snapshot] = await Promise.all([getActiveTab(), getWorkflowSnapshot()]);
+        if (snapshotMatchesTab(snapshot, tab)) {
+          setDebugRunId(snapshot.runId);
+          setScannedCount(snapshot.scannedCount);
+          setPlanData(snapshot.planData);
+          setExecution(snapshot.execution);
+          setPlanPhase(snapshot.phase);
+          if (isStaleRunningSnapshot(snapshot)) {
+            setState('error');
+            setPlanPhase('idle');
+            setError('上次任务在弹窗关闭后中断。请重新扫描当前页面。');
+          } else {
+            setState(snapshot.state);
+            setError(snapshot.error);
+          }
+          if (snapshot.state !== 'idle') setRestoredWorkflow(true);
+        }
+      } catch {
+        // Restoring workflow state is a convenience; never block opening popup.
+      }
     }
     init();
   }, []);
 
+  async function persistWorkflow(partial: {
+    state: FlowState;
+    phase?: PlanPhase;
+    planData?: PlanResponse | null;
+    execution?: DynamicFillExecution | null;
+    error?: string;
+    scannedCount?: number;
+    runId?: string | null;
+    tab?: chrome.tabs.Tab;
+  }) {
+    try {
+      const tab = partial.tab ?? await getActiveTab();
+      const url = tab.url ?? '';
+      await saveWorkflowSnapshot({
+        runId: partial.runId === undefined ? debugRunId : partial.runId,
+        tabId: tab.id ?? null,
+        pageUrl: url,
+        pageDomain: url ? new URL(url).hostname : '',
+        state: partial.state,
+        phase: partial.phase ?? planPhase,
+        scannedCount: partial.scannedCount ?? scannedCount,
+        planData: partial.planData === undefined ? planData : partial.planData,
+        execution: partial.execution === undefined ? execution : partial.execution,
+        error: partial.error ?? error,
+      });
+    } catch {
+      // Popup state persistence should never fail the user-facing action.
+    }
+  }
+
   async function handleRuleFill() {
     setState('filling');
     setError('');
+    await persistWorkflow({ state: 'filling', phase: 'idle', error: '' });
     try {
       const tab = await getActiveTab();
       await sendTabMessageWithRetry(tab, { type: 'TRIGGER_FILL' });
       setState('done');
+      await persistWorkflow({ state: 'done', phase: 'idle', tab });
     } catch (err) {
-      setError(humanizeError(err));
+      const message = humanizeError(err);
+      setError(message);
       setState('error');
+      await persistWorkflow({ state: 'error', phase: 'idle', error: message });
     }
   }
 
   async function handleScanAndPlan() {
     setState('planning');
+    setPlanPhase('connect');
+    setRestoredWorkflow(false);
     setPlanData(null);
     setExecution(null);
     setError('');
@@ -201,6 +306,27 @@ export default function App() {
       tabForDebug = tab;
       runIdForDebug = createDebugRunId(tab.url ? new URL(tab.url).hostname : 'page');
       setDebugRunId(runIdForDebug);
+      await persistWorkflow({
+        state: 'planning',
+        phase: 'connect',
+        planData: null,
+        execution: null,
+        error: '',
+        scannedCount: 0,
+        runId: runIdForDebug,
+        tab,
+      });
+      setPlanPhase('scan');
+      await persistWorkflow({
+        state: 'planning',
+        phase: 'scan',
+        planData: null,
+        execution: null,
+        error: '',
+        scannedCount: 0,
+        runId: runIdForDebug,
+        tab,
+      });
       const scanRes = await sendTabMessageWithRetry<{ ok?: boolean; data?: unknown; error?: string }>(tab, { type: 'SHEETKILLER_SCAN' });
       if (!scanRes?.ok) throw new Error(scanRes?.error ?? '扫描页面失败。');
       const fields = scanRes.data as SerializableFieldInventoryItem[];
@@ -208,6 +334,14 @@ export default function App() {
       setScannedCount(fields.length);
 
       phase = 'plan';
+      setPlanPhase('ai');
+      await persistWorkflow({
+        state: 'planning',
+        phase: 'ai',
+        scannedCount: fields.length,
+        runId: runIdForDebug,
+        tab,
+      });
       const planRes = await chrome.runtime.sendMessage({
         type: 'CREATE_SHEETKILLER_PLAN',
         fields,
@@ -215,16 +349,35 @@ export default function App() {
         pageDomain: tab.url ? new URL(tab.url).hostname : '',
       });
       if (!planRes?.ok) throw new Error(planRes?.error ?? '生成填写计划失败。');
-      setPlanData(planRes.data as PlanResponse);
+      setPlanPhase('build');
+      const nextPlanData = planRes.data as PlanResponse;
+      setPlanData(nextPlanData);
+      await persistWorkflow({
+        state: 'planning',
+        phase: 'build',
+        planData: nextPlanData,
+        scannedCount: fields.length,
+        runId: runIdForDebug,
+        tab,
+      });
       await safeDebugWrite(() => upsertDebugRun(buildPlannedDebugRun({
           id: runIdForDebug,
           page: pageFromTab(tab),
           extension: extensionInfo(),
           fields,
-          plan: (planRes.data as PlanResponse).plan,
-          summary: (planRes.data as PlanResponse).summary,
+          plan: nextPlanData.plan,
+          summary: nextPlanData.summary,
         })));
       setState('planned');
+      setPlanPhase('idle');
+      await persistWorkflow({
+        state: 'planned',
+        phase: 'idle',
+        planData: nextPlanData,
+        scannedCount: fields.length,
+        runId: runIdForDebug,
+        tab,
+      });
     } catch (err) {
       const message = humanizeError(err);
       setError(message);
@@ -239,6 +392,17 @@ export default function App() {
           })));
       }
       setState('error');
+      setPlanPhase('idle');
+      if (tabForDebug) {
+        await persistWorkflow({
+          state: 'error',
+          phase: 'idle',
+          error: message,
+          scannedCount: fieldsForDebug?.length ?? scannedCount,
+          runId: runIdForDebug || debugRunId,
+          tab: tabForDebug,
+        });
+      }
     }
   }
 
@@ -248,6 +412,7 @@ export default function App() {
     setError('');
     try {
       const tab = await getActiveTab();
+      await persistWorkflow({ state: 'filling', phase: 'idle', error: '', tab });
       const res = await sendTabMessageWithRetry<{ ok?: boolean; data?: unknown; error?: string }>(tab, {
         type: 'SHEETKILLER_EXECUTE_PLAN',
         plan: planData.plan,
@@ -255,6 +420,7 @@ export default function App() {
       if (!res?.ok) throw new Error(res?.error ?? '自动填写失败。');
       const executionResult = res.data as DynamicFillExecution;
       setExecution(executionResult);
+      await persistWorkflow({ state: 'done', phase: 'idle', execution: executionResult, tab });
       if (debugRunId) {
         await safeDebugWrite(() => patchDebugRun(debugRunId, {
             status: 'filled',
@@ -269,7 +435,14 @@ export default function App() {
         await safeDebugWrite(() => appendDebugRunError(debugRunId, 'fill', message));
       }
       setState('error');
+      await persistWorkflow({ state: 'error', phase: 'idle', error: message });
     }
+  }
+
+  async function handleTogglePreview() {
+    const nextState: FlowState = state === 'preview' ? 'planned' : 'preview';
+    setState(nextState);
+    await persistWorkflow({ state: nextState, phase: 'idle' });
   }
 
   const stats = activeResume ? countFields(activeResume) : null;
@@ -277,7 +450,17 @@ export default function App() {
   const isEmpty = !stats || stats.filled === 0;
   const previewItems = planData?.plan.slice(0, 10) ?? [];
   const workflowSteps = ['扫描', '规划', '填写', '复核'];
-  const activeStep = state === 'planning' ? 0 : state === 'planned' || state === 'preview' ? 1 : state === 'filling' ? 2 : state === 'done' ? 3 : -1;
+  const activeStep = state === 'planning'
+    ? (planPhase === 'ai' || planPhase === 'build' ? 1 : 0)
+    : state === 'planned' || state === 'preview'
+      ? 1
+      : state === 'filling'
+        ? 2
+        : state === 'done'
+          ? 3
+          : -1;
+  const currentPlanPhase = PLAN_PHASES.find((item) => item.id === planPhase);
+  const currentPlanPhaseIndex = planPhaseIndex(planPhase);
 
   return (
     <I18nContext.Provider value={i18n}>
@@ -331,6 +514,12 @@ export default function App() {
             ))}
           </div>
 
+          {restoredWorkflow && (
+            <div className="mb-3 rounded-2xl border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-xs leading-5 text-[var(--sk-primary)]">
+              已恢复上次页面状态。你可以继续当前步骤，或重新扫描当前页面。
+            </div>
+          )}
+
           {state === 'idle' || state === 'error' || state === 'done' ? (
             <button
               onClick={handleScanAndPlan}
@@ -344,8 +533,52 @@ export default function App() {
           ) : null}
 
           {state === 'planning' && (
-            <div className="rounded-2xl bg-[#f8fbff] border border-[var(--sk-border)] px-3 py-3 text-sm text-[var(--sk-muted)]">
-              正在扫描页面并生成填写计划...
+            <div className="rounded-2xl bg-[#f8fbff] border border-[var(--sk-border)] px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-[var(--sk-text)]">
+                    {currentPlanPhase?.title ?? '准备扫描'}
+                  </div>
+                  <div className="mt-1 text-xs leading-5 text-[var(--sk-muted)]">
+                    {currentPlanPhase?.description ?? '正在准备自动化流程。'}
+                  </div>
+                </div>
+                <div className="h-8 w-8 shrink-0 rounded-full border-2 border-[#bfdbfe] border-t-[var(--sk-primary)] animate-spin" />
+              </div>
+              <div className="mt-3 space-y-2">
+                {PLAN_PHASES.map((phase, index) => {
+                  const active = phase.id === planPhase;
+                  const done = currentPlanPhaseIndex > index;
+                  return (
+                    <div
+                      key={phase.id}
+                      className={`flex items-start gap-2 rounded-2xl px-2.5 py-2 text-xs ${
+                        active
+                          ? 'bg-white text-[var(--sk-text)] shadow-sm ring-1 ring-[var(--sk-border)]'
+                          : done
+                            ? 'text-[var(--sk-success)]'
+                            : 'text-[var(--sk-muted)]'
+                      }`}
+                    >
+                      <span
+                        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                          done
+                            ? 'bg-[var(--sk-success)] text-white'
+                            : active
+                              ? 'bg-[var(--sk-primary)] text-white'
+                              : 'bg-slate-200 text-slate-500'
+                        }`}
+                      >
+                        {done ? '✓' : index + 1}
+                      </span>
+                      <span>
+                        <span className="font-semibold">{phase.title}</span>
+                        {active && <span className="ml-1 text-[var(--sk-muted)]">{phase.description}</span>}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -363,7 +596,7 @@ export default function App() {
                   开始填写
                 </button>
                 <button
-                  onClick={() => setState(state === 'preview' ? 'planned' : 'preview')}
+                  onClick={handleTogglePreview}
                   className="flex-1 py-2.5 rounded-2xl text-xs font-semibold bg-white hover:bg-[#f8fbff] text-[var(--sk-text)] border border-[var(--sk-border)]"
                 >
                   {state === 'preview' ? '收起预览' : '预览计划'}
@@ -387,7 +620,17 @@ export default function App() {
           )}
 
           {state === 'error' && (
-            <div className="text-xs text-[var(--sk-error)] bg-red-50 border border-red-200 rounded-2xl px-3 py-2 leading-relaxed mt-3">{error}</div>
+            <div className="mt-3">
+              <div className="text-xs text-[var(--sk-error)] bg-red-50 border border-red-200 rounded-2xl px-3 py-2 leading-relaxed">{error}</div>
+              {/API 设置/.test(error) && (
+                <button
+                  onClick={openApiSettings}
+                  className="mt-2 w-full py-2.5 rounded-2xl text-xs font-semibold bg-[var(--sk-primary)] hover:bg-[var(--sk-primary-hover)] text-white"
+                >
+                  打开 API 设置
+                </button>
+              )}
+            </div>
           )}
         </div>
 
@@ -421,10 +664,10 @@ export default function App() {
             {t('popup.edit')}
           </button>
           <button
-            onClick={() => openDashboard('settings')}
+            onClick={openApiSettings}
             className="flex-1 py-2.5 px-3 rounded-2xl text-xs font-semibold bg-white hover:bg-[#f8fbff] text-[var(--sk-text)] border border-[var(--sk-border)] transition-colors shadow-sm"
           >
-            {t('nav.settings')}
+            API 设置
           </button>
         </div>
 

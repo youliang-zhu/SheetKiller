@@ -15,8 +15,6 @@ import {
 } from '@/lib/storage/resume-store';
 import { countFields } from '@/lib/storage/resume-utils';
 import { extractResumeFields, toResume } from '@/lib/import/resume-extractor';
-import { getSettings } from '@/lib/storage/settings-store';
-import { completeProfileWithAi, mergeAiProfileCompletion } from '@/lib/import/ai-profile-completer';
 
 import Sidebar, { type SectionId } from '@/components/popup/Sidebar';
 import ResumeSelector from '@/components/popup/ResumeSelector';
@@ -31,7 +29,6 @@ import AchievementsSection from '@/components/popup/sections/AchievementsSection
 import SkillsSection from '@/components/popup/sections/Skills';
 import JobPreferenceSection from '@/components/popup/sections/JobPreference';
 import SupplementalInfoSection from '@/components/popup/sections/SupplementalInfo';
-import SettingsSection from '@/components/popup/sections/Settings';
 import SavedPagesSection from '@/components/popup/sections/SavedPages';
 
 const PROFILE_MODE_KEY = 'formpilot:profileEditorMode';
@@ -78,7 +75,7 @@ export default function App() {
 
   const VALID_SECTIONS: SectionId[] = [
     'basic', 'education', 'experience', 'achievements', 'skills',
-    'jobPreference', 'supplemental', 'savedPages', 'settings',
+    'jobPreference', 'supplemental', 'savedPages',
   ];
 
   useEffect(() => {
@@ -88,9 +85,9 @@ export default function App() {
     }
   }, []);
 
-  // Reflect section changes in the URL hash. Skip the very first render —
-  // otherwise a deep link (#settings) flickers to the initial state's hash
-  // (#basic) before the hash-read effect's setSection has committed.
+  // Reflect section changes in the URL hash. Skip the very first render so a
+  // deep link does not flicker to the initial state's hash before the hash-read
+  // effect has committed.
   const didSyncHash = useRef(false);
   useEffect(() => {
     if (!didSyncHash.current) {
@@ -299,36 +296,11 @@ export default function App() {
     setReviewCount(aiProfileData.needsReview);
     await refreshActiveResume();
     return aiProfileData;
-
-    const settings = await getSettings();
-    if (!settings.apiProvider || !settings.apiKey) {
-      throw new Error('请先选择 AI 供应商并填写 API Key');
-    }
-
-    const providerDefaults = {
-      openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5' },
-      deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-    } as const;
-    const completion = await completeProfileWithAi(
-      trimmed,
-      settings,
-      providerDefaults[settings.apiProvider],
-    );
-    const { patch, filledCount } = mergeAiProfileCompletion(activeResume, completion);
-    await updateResume(activeId, patch);
-    const data = { filledCount, needsReview: filledCount };
-    setReviewCount(filledCount);
-    await refreshActiveResume();
-    return data;
   }, [activeId, activeResume, flushPendingSave, refreshActiveResume]);
 
   // ─── Render section content ───────────────────────────────────────────────
 
   function renderContent() {
-    if (section === 'settings') {
-      return <SettingsSection />;
-    }
-
     if (section === 'savedPages') {
       return <SavedPagesSection />;
     }
@@ -447,22 +419,18 @@ export default function App() {
               onRename={handleRenameResume}
             />
           </div>
-          {/* Settings — always reachable from the header */}
+          {/* API settings live outside the profile editor. */}
           <button
-            onClick={() => setSection('settings')}
-            title={i18n.t('nav.settings')}
-            className={`px-3 py-2 rounded-2xl text-xs font-semibold transition-colors flex items-center gap-1 border
-              ${section === 'settings'
-                ? 'bg-[var(--sk-primary)] text-white border-[var(--sk-primary)]'
-                : 'bg-white hover:bg-[#f8fbff] text-[var(--sk-muted)] border-[var(--sk-border)]'
-              }`}
+            onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL('/settings.html') })}
+            title="API 设置"
+            className="px-3 py-2 rounded-2xl text-xs font-semibold transition-colors flex items-center gap-1 border bg-white hover:bg-[#f8fbff] text-[var(--sk-muted)] border-[var(--sk-border)] hover:text-[var(--sk-text)]"
           >
-            <span className="hidden sm:inline">{i18n.t('nav.settings')}</span>
+            <span className="hidden sm:inline">API 设置</span>
           </button>
         </div>
       </div>
 
-      {section !== 'settings' && section !== 'savedPages' && (
+      {section !== 'savedPages' && (
         <div className="max-w-6xl mx-auto w-full px-6 pt-6">
           <ProfileModeWorkbench
             mode={profileMode}

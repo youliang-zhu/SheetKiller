@@ -39,6 +39,10 @@ const mockSessionStorage = {
   set: async (items: Record<string, unknown>) => {
     Object.assign(sessionStore, items);
   },
+  remove: async (keys: string | string[]) => {
+    const keyList = typeof keys === 'string' ? [keys] : keys;
+    for (const k of keyList) delete sessionStore[k];
+  },
 };
 
 Object.defineProperty(globalThis, 'chrome', {

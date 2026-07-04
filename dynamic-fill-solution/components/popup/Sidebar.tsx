@@ -9,8 +9,7 @@ export type SectionId =
   | 'skills'
   | 'jobPreference'
   | 'supplemental'
-  | 'savedPages'
-  | 'settings';
+  | 'savedPages';
 
 interface SidebarProps {
   active: SectionId;
@@ -49,18 +48,6 @@ export default function Sidebar({ active, onChange, className }: SidebarProps) {
             {item.label}
           </button>
         ))}
-      </div>
-      <div className="border-t border-[var(--sk-border)] p-2">
-        <button
-          onClick={() => onChange('settings')}
-          className={`w-full text-left px-3 py-2.5 text-xs font-semibold rounded-2xl transition-colors
-            ${active === 'settings'
-              ? 'bg-[var(--sk-primary)] text-white'
-              : 'text-[var(--sk-muted)] hover:bg-[#f8fbff] hover:text-[var(--sk-text)]'
-            }`}
-        >
-          {t('nav.settings')}
-        </button>
       </div>
     </div>
   );

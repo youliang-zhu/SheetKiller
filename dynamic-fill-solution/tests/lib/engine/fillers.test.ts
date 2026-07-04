@@ -151,4 +151,39 @@ describe('fillElement', () => {
     expect(result).toBe(true);
     expect(input.value).toBe('2024-01-15');
   });
+
+  it('falls back to custom select when select strategy targets a visual input', async () => {
+    document.body.innerHTML = `
+      <div class="el-select">
+        <input type="text" placeholder="请选择">
+      </div>
+      <div class="el-select-dropdown__item">本科</div>
+      <div class="el-select-dropdown__item">硕士（Master）</div>
+    `;
+    const input = document.querySelector('input') as HTMLInputElement;
+    const master = Array.from(document.querySelectorAll('.el-select-dropdown__item'))[1];
+    master.addEventListener('click', () => {
+      input.value = '硕士（Master）';
+    });
+
+    const result = await fillElement(input, '硕士', 'select');
+
+    expect(result).toBe(true);
+    expect(input.value).toBe('硕士（Master）');
+  });
+
+  it('fills a date value through an Element Plus date wrapper', async () => {
+    document.body.innerHTML = `
+      <div class="el-date-editor" role="combobox">
+        <input type="text" placeholder="请选择">
+      </div>
+    `;
+    const wrapper = document.querySelector('.el-date-editor') as HTMLElement;
+    const input = document.querySelector('input') as HTMLInputElement;
+
+    const result = await fillElement(wrapper, '2025-09', 'date');
+
+    expect(result).toBe(true);
+    expect(input.value).toBe('2025-09');
+  });
 });
