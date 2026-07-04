@@ -280,7 +280,7 @@ describe('SheetKiller LLM planner', () => {
     }, fetchImpl as typeof fetch);
   });
 
-  it('chunks large field inventories to keep planner requests small', async () => {
+  it('sends large field inventories in one planner request', async () => {
     const calls: unknown[] = [];
     const fetchImpl = async (_url: string | URL | Request, init?: RequestInit) => {
       calls.push(JSON.parse(String(init?.body)));
@@ -300,7 +300,8 @@ describe('SheetKiller LLM planner', () => {
       model: 'gpt-5.5',
     }, fetchImpl as typeof fetch);
 
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(1);
+    expect(JSON.stringify(calls[0])).toContain('字段79');
   });
 
   it('truncates long select option lists in the planner prompt', () => {

@@ -3,6 +3,50 @@ import { cssEscape } from '@/lib/capture/css-escape';
 import { setNativeValue, setNativeChecked } from '@/lib/capture/native-set';
 import { isVisuallyHidden, findVisualProxy } from '@/lib/capture/widget-proxy';
 
+export interface FillTraceStep {
+  stage: string;
+  success?: boolean;
+  message?: string;
+  root?: string;
+  input?: string;
+  inputReadonly?: boolean;
+  inputDisabled?: boolean;
+  optionCount?: number;
+  optionSamples?: string[];
+  selectedOption?: string;
+  panelCount?: number;
+  panelClasses?: string[];
+}
+
+export interface FillElementOptions {
+  trace?: FillTraceStep[];
+}
+
+function addTrace(options: FillElementOptions | undefined, step: FillTraceStep): void {
+  options?.trace?.push(step);
+}
+
+function describeElement(el: Element | null | undefined): string {
+  if (!el) return '';
+  const parts = [el.tagName.toLowerCase()];
+  const id = el.getAttribute('id');
+  const role = el.getAttribute('role');
+  const className = el instanceof HTMLElement ? el.className : '';
+  if (id) parts.push(`#${id}`);
+  if (typeof className === 'string' && className.trim()) {
+    parts.push(`.${className.trim().split(/\s+/).slice(0, 4).join('.')}`);
+  }
+  if (role) parts.push(`[role="${role}"]`);
+  return parts.join('');
+}
+
+function optionSamples(options: Element[], limit = 8): string[] {
+  return options
+    .map((option) => (option.textContent ?? '').trim().replace(/\s+/g, ' '))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
 function dispatchEvents(el: Element, events: string[]): void {
   for (const eventName of events) {
     const event = eventName === 'input' || eventName === 'change'
@@ -52,9 +96,21 @@ function isChoiceLikeElement(el: Element): boolean {
 }
 
 function closestInteractiveRoot(el: Element): Element {
-  return el.closest(
-    '.el-select, .el-autocomplete, .el-cascader, .el-date-editor, .ant-select, .ant-picker, [role="combobox"], .el-input',
-  ) ?? el;
+  const selectors = [
+    '.el-select',
+    '.el-cascader',
+    '.el-autocomplete',
+    '.el-date-editor',
+    '.ant-select',
+    '.ant-picker',
+    '[role="combobox"]',
+    '.el-input',
+  ];
+  for (const selector of selectors) {
+    const root = el.closest(selector);
+    if (root) return root;
+  }
+  return el;
 }
 
 function innerTextInput(el: Element): HTMLInputElement | HTMLTextAreaElement | null {
@@ -81,8 +137,21 @@ function clickElement(el: Element): void {
 
 function isVisibleElement(option: Element): boolean {
   const element = option as HTMLElement;
-  const style = element.ownerDocument.defaultView?.getComputedStyle(element);
-  return style?.display !== 'none' && style?.visibility !== 'hidden';
+  if (!element.isConnected) return false;
+  let current: HTMLElement | null = element;
+  const win = element.ownerDocument.defaultView;
+  while (current && current !== element.ownerDocument.documentElement) {
+    if (current.hidden || current.getAttribute('aria-hidden') === 'true') return false;
+    const style = win?.getComputedStyle(current);
+    if (style?.display === 'none' || style?.visibility === 'hidden' || style?.opacity === '0') return false;
+    current = current.parentElement;
+  }
+  const rects = element.getClientRects();
+  if (rects.length > 0) {
+    const rect = element.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return false;
+  }
+  return true;
 }
 
 async function waitForOptions(doc: Document, selectors: string[], attempts = 14): Promise<Element[]> {
@@ -95,15 +164,33 @@ async function waitForOptions(doc: Document, selectors: string[], attempts = 14)
   return [];
 }
 
-async function fillText(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<boolean> {
+async function fillText(
+  el: HTMLInputElement | HTMLTextAreaElement,
+  value: string,
+  options?: FillElementOptions,
+): Promise<boolean> {
+  addTrace(options, {
+    stage: 'text:start',
+    input: describeElement(el),
+    inputReadonly: el.readOnly,
+    inputDisabled: el.disabled,
+  });
   if (el.readOnly || el.disabled) return false;
   setNativeValue(el, value);
   dispatchEvents(el, ['focus', 'input', 'change', 'blur']);
-  return el.value === value;
+  const success = el.value === value;
+  addTrace(options, { stage: 'text:verify', success });
+  return success;
 }
 
-async function fillSelect(el: HTMLSelectElement, value: string): Promise<boolean> {
-  if (!(el instanceof HTMLSelectElement)) return fillCustomSelect(el, value);
+async function fillSelect(el: HTMLSelectElement, value: string, options?: FillElementOptions): Promise<boolean> {
+  if (!(el instanceof HTMLSelectElement)) return fillCustomSelect(el, value, options);
+  addTrace(options, {
+    stage: 'native-select:start',
+    root: describeElement(el),
+    optionCount: el.options.length,
+    optionSamples: Array.from(el.options).map((opt) => opt.text).filter(Boolean).slice(0, 8),
+  });
   const matched = Array.from(el.options).find((opt) => (
     optionMatchesText(opt.text, value) || optionMatchesText(opt.value, value)
   ));
@@ -111,6 +198,7 @@ async function fillSelect(el: HTMLSelectElement, value: string): Promise<boolean
 
   setNativeValue(el, matched.value);
   dispatchEvents(el, ['focus', 'input', 'change', 'blur']);
+  addTrace(options, { stage: 'native-select:selected', success: true, selectedOption: matched.text });
   return true;
 }
 
@@ -201,13 +289,21 @@ async function fillCheckbox(el: HTMLInputElement, value: string): Promise<boolea
   return true;
 }
 
-async function fillDate(el: HTMLInputElement, value: string): Promise<boolean> {
+async function fillDate(el: HTMLInputElement, value: string, options?: FillElementOptions): Promise<boolean> {
+  addTrace(options, {
+    stage: 'native-date:start',
+    input: describeElement(el),
+    inputReadonly: el.readOnly,
+    inputDisabled: el.disabled,
+  });
   if (el.readOnly || el.disabled) return false;
   setNativeValue(el, value);
   dispatchEvents(el, ['focus', 'input']);
   dispatchKeyboard(el, 'Enter');
   dispatchEvents(el, ['change', 'blur']);
-  return el.value === value;
+  const success = el.value === value;
+  addTrace(options, { stage: 'native-date:verify', success });
+  return success;
 }
 
 function dateCandidates(value: string): string[] {
@@ -233,20 +329,48 @@ function dateCandidates(value: string): string[] {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
-async function fillCustomDate(el: Element, value: string): Promise<boolean> {
+function collectPickerPanels(doc: Document): Element[] {
+  return Array.from(doc.querySelectorAll(
+    '.el-picker-panel, .el-date-picker, .el-month-table, .ant-picker-dropdown, [class*="picker-panel"]',
+  )).filter(isVisibleElement);
+}
+
+async function fillCustomDate(el: Element, value: string, options?: FillElementOptions): Promise<boolean> {
   const root = closestInteractiveRoot(el);
   const input = innerTextInput(root);
-  if (!input || input.disabled || input.readOnly) return false;
+  addTrace(options, {
+    stage: 'custom-date:start',
+    root: describeElement(root),
+    input: describeElement(input),
+    inputReadonly: input?.readOnly,
+    inputDisabled: input?.disabled,
+  });
+  if (!input || input.disabled) return false;
+
+  const trigger = root.querySelector('.el-input__wrapper, .el-input__inner, input, .ant-picker-input') ?? root;
+  clickElement(trigger);
   clickElement(root);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const panels = collectPickerPanels(el.ownerDocument);
+  addTrace(options, {
+    stage: 'custom-date:open-panel',
+    panelCount: panels.length,
+    panelClasses: panels.map(describeElement).slice(0, 4),
+  });
 
   for (const candidate of dateCandidates(value)) {
+    const wasReadOnly = input.readOnly;
+    if (wasReadOnly && input instanceof HTMLInputElement) input.readOnly = false;
     input.focus();
     setNativeValue(input, candidate);
     dispatchEvents(input, ['focus', 'input']);
     dispatchKeyboard(input, 'Enter');
     dispatchEvents(input, ['change', 'blur']);
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    if (input.value === candidate) return true;
+    if (wasReadOnly && input instanceof HTMLInputElement) input.readOnly = true;
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const success = input.value === candidate;
+    addTrace(options, { stage: 'custom-date:type-candidate', success });
+    if (success) return true;
   }
   return false;
 }
@@ -270,42 +394,164 @@ const overlaySelectors = [
   '[class*="dropdown"] li',
 ];
 
-async function clickMatchingOption(doc: Document, value: string): Promise<boolean> {
-  const options = await waitForOptions(doc, overlaySelectors);
-  const match = options.find((option) => {
+const overlayRootSelectors = [
+  '.el-select-dropdown',
+  '.el-cascader__dropdown',
+  '.el-autocomplete-suggestion',
+  '.el-popper',
+  '.ant-select-dropdown',
+  '.ant-cascader-dropdown',
+  '[role="listbox"]',
+  '.dropdown-menu',
+  '[class*="dropdown"]',
+];
+
+function uniqueByIdentity<T extends Element>(elements: T[]): T[] {
+  return elements.filter((element, index) => elements.indexOf(element) === index);
+}
+
+function collectControlledOverlayRoots(doc: Document, root: Element, input: Element | null): Element[] {
+  const ids = [root, input]
+    .filter(Boolean)
+    .flatMap((element) => [
+      element?.getAttribute('aria-controls'),
+      element?.getAttribute('aria-owns'),
+      element?.getAttribute('aria-describedby'),
+    ])
+    .filter((id): id is string => Boolean(id));
+  const controlled = ids.flatMap((id) => {
+    try {
+      return Array.from(doc.querySelectorAll(`#${cssEscape(id)}`));
+    } catch {
+      return [];
+    }
+  });
+  return controlled.filter(isVisibleElement);
+}
+
+function collectVisibleOverlayRoots(doc: Document, root: Element, input: Element | null): Element[] {
+  const controlled = collectControlledOverlayRoots(doc, root, input);
+  const controlledWithOptions = controlled
+    .filter((candidate) => overlaySelectors.some((selector) => candidate.querySelector(selector)));
+  if (controlledWithOptions.length > 0) return uniqueByIdentity(controlledWithOptions);
+
+  const visible = overlayRootSelectors
+    .flatMap((selector) => Array.from(doc.querySelectorAll(selector)))
+    .filter((candidate) => candidate !== doc.body && candidate !== doc.documentElement)
+    .filter(isVisibleElement)
+    .filter((candidate) => overlaySelectors.some((selector) => candidate.querySelector(selector)));
+  return uniqueByIdentity([...controlled, ...visible]);
+}
+
+async function waitForScopedOptions(
+  doc: Document,
+  scopes: Element[],
+  attempts = 14,
+): Promise<Element[]> {
+  for (let i = 0; i < attempts; i++) {
+    const roots = scopes.length > 0 ? scopes : [doc.body];
+    const candidates = roots.flatMap((scope) => (
+      overlaySelectors.flatMap((selector) => Array.from(scope.querySelectorAll(selector)))
+    ));
+    const visible = uniqueByIdentity(candidates).filter(isVisibleElement);
+    if (visible.length > 0) return visible;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return [];
+}
+
+async function clickMatchingOption(
+  doc: Document,
+  value: string,
+  fillOptions?: FillElementOptions,
+  stage = 'custom-select:options',
+  scopes: Element[] = [],
+): Promise<boolean> {
+  const candidates = scopes.length > 0
+    ? await waitForScopedOptions(doc, scopes)
+    : await waitForOptions(doc, overlaySelectors);
+  addTrace(fillOptions, {
+    stage,
+    optionCount: candidates.length,
+    optionSamples: optionSamples(candidates),
+  });
+  const enabled = candidates.filter((option) => {
     const element = option as HTMLElement;
     if (element.getAttribute('aria-disabled') === 'true' || element.classList.contains('is-disabled')) return false;
-    return optionMatchesText(element.textContent ?? '', value);
+    return true;
   });
+  const target = normalizeToken(value);
+  const exactMatch = enabled.find((option) => normalizeToken(option.textContent ?? '') === target);
+  const looseMatch = enabled.find((option) => optionMatchesText(option.textContent ?? '', value));
+  const match = exactMatch ?? looseMatch;
   if (!match) return false;
   clickElement(match);
   await new Promise((resolve) => setTimeout(resolve, 120));
+  addTrace(fillOptions, {
+    stage: `${stage}:selected`,
+    success: true,
+    selectedOption: (match.textContent ?? '').trim().replace(/\s+/g, ' '),
+  });
   return true;
 }
 
-async function fillCustomSelect(el: Element, value: string): Promise<boolean> {
+async function fillCustomSelect(el: Element, value: string, options?: FillElementOptions): Promise<boolean> {
   const root = closestInteractiveRoot(el);
   const input = innerTextInput(root);
   const doc = el.ownerDocument;
   if (!doc) return false;
 
-  if (input && !input.disabled && !input.readOnly) input.focus();
-  clickElement(root);
-  if (await clickMatchingOption(doc, value)) return true;
+  addTrace(options, {
+    stage: 'custom-select:start',
+    root: describeElement(root),
+    input: describeElement(input),
+    inputReadonly: input?.readOnly,
+    inputDisabled: input?.disabled,
+  });
 
-  if (input && !input.disabled && !input.readOnly) {
+  if (input && !input.disabled) input.focus();
+  const trigger = root.querySelector('.el-input__wrapper, .el-select__wrapper, .el-input__inner, input, [role="combobox"]') ?? root;
+  clickElement(trigger);
+  clickElement(root);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  let scopes = collectVisibleOverlayRoots(doc, root, input);
+  addTrace(options, {
+    stage: 'custom-select:scopes-after-open',
+    optionCount: scopes.length,
+    optionSamples: scopes.map(describeElement).slice(0, 8),
+  });
+  if (await clickMatchingOption(doc, value, options, 'custom-select:after-open', scopes)) return true;
+
+  if (input && !input.disabled) {
+    const wasReadOnly = input.readOnly;
+    if (wasReadOnly && input instanceof HTMLInputElement) input.readOnly = false;
     input.focus();
     setNativeValue(input, value);
     dispatchEvents(input, ['focus', 'input']);
+    if (wasReadOnly && input instanceof HTMLInputElement) input.readOnly = true;
+    addTrace(options, {
+      stage: 'custom-select:type-filter',
+      inputReadonly: wasReadOnly,
+      message: wasReadOnly ? 'Temporarily removed readonly while dispatching input.' : undefined,
+    });
   }
 
-  await new Promise((resolve) => setTimeout(resolve, 250));
-  if (await clickMatchingOption(doc, value)) return true;
+  const waitMs = root.matches('.el-autocomplete') || root.closest('.el-autocomplete') || input?.readOnly ? 1200 : 300;
+  await new Promise((resolve) => setTimeout(resolve, waitMs));
+  scopes = collectVisibleOverlayRoots(doc, root, input);
+  addTrace(options, {
+    stage: 'custom-select:scopes-after-filter',
+    optionCount: scopes.length,
+    optionSamples: scopes.map(describeElement).slice(0, 8),
+  });
+  if (await clickMatchingOption(doc, value, options, 'custom-select:after-filter', scopes)) return true;
 
-  if (input && !input.readOnly && !input.disabled) {
+  if (input && !input.disabled) {
     dispatchKeyboard(input, 'Enter');
     dispatchEvents(input, ['change', 'blur']);
-    return normalizeToken(input.value) === normalizeToken(value);
+    const success = normalizeToken(input.value) === normalizeToken(value);
+    addTrace(options, { stage: 'custom-select:enter-fallback', success });
+    return success;
   }
   return false;
 }
@@ -340,15 +586,29 @@ function uniqueElements(elements: Element[]): Element[] {
   return elements.filter((element, index) => elements.indexOf(element) === index);
 }
 
-function findGroupedRegionToken(el: Element, tokens: string[]): string | null {
+function collectGroupedControlRoots(group: Element): Element[] {
+  const primary = uniqueElements(Array.from(group.querySelectorAll<Element>(
+    'select, .el-select, .el-cascader, .ant-select, [role="combobox"]',
+  )).map(closestInteractiveRoot));
+  const fallbackInputs = Array.from(group.querySelectorAll<Element>('input[placeholder]'))
+    .filter((input) => !primary.some((root) => root === input || root.contains(input) || input.contains(root)))
+    .map(closestInteractiveRoot);
+  return uniqueElements([...primary, ...fallbackInputs]);
+}
+
+function findGroupedRegionToken(el: Element, tokens: string[], options?: FillElementOptions): string | null {
   const group = el.closest('.el-form-item, .ant-form-item, fieldset, [role="group"]');
   if (!group || tokens.length < 2) return null;
   const text = `${group.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`;
   if (!/籍贯|出生地|户籍|所在地|城市|地区|国家|省|市/.test(text)) return null;
 
-  const controlRoots = uniqueElements(Array.from(group.querySelectorAll<Element>(
-    'select, .el-select, .el-cascader, [role="combobox"], .ant-select',
-  )).map(closestInteractiveRoot));
+  const controlRoots = collectGroupedControlRoots(group);
+  addTrace(options, {
+    stage: 'region:group-detected',
+    root: describeElement(group),
+    optionCount: controlRoots.length,
+    optionSamples: controlRoots.map(describeElement).slice(0, 8),
+  });
   if (controlRoots.length < 2) return null;
 
   const root = closestInteractiveRoot(el);
@@ -357,10 +617,17 @@ function findGroupedRegionToken(el: Element, tokens: string[]): string | null {
 
   const startsWithCountry = /^中国$|^China$/i.test(tokens[0] ?? '');
   const tokenIndex = startsWithCountry && controlRoots.length === tokens.length - 1 ? index + 1 : index;
-  return tokens[tokenIndex] ?? null;
+  const token = tokens[tokenIndex] ?? null;
+  addTrace(options, {
+    stage: 'region:group-token',
+    success: Boolean(token),
+    selectedOption: token ?? undefined,
+    message: `index=${index}; tokenIndex=${tokenIndex}`,
+  });
+  return token;
 }
 
-function collectCascaderOptions(doc: Document): Element[] {
+function collectCascaderOptions(doc: Document, scopes: Element[] = []): Element[] {
   const selectors = [
     '.ant-cascader-menu-item',
     '.ant-cascader-menu-item-content',
@@ -372,35 +639,86 @@ function collectCascaderOptions(doc: Document): Element[] {
     '.cascader-option',
     '.cascader-item',
   ];
-  return selectors.flatMap((selector) => Array.from(doc.querySelectorAll(selector)));
+  const roots = scopes.length > 0 ? scopes : [doc.body];
+  return uniqueElements(roots.flatMap((root) => (
+    selectors.flatMap((selector) => Array.from(root.querySelectorAll(selector)))
+  )));
 }
 
-async function clickMatchingCascaderOption(doc: Document, token: string): Promise<boolean> {
-  const match = collectCascaderOptions(doc).find((option) => optionMatchesText(option.textContent ?? '', token));
+function shouldFillAsRegion(el: Element, value: string): boolean {
+  const tokens = splitRegionTokens(value);
+  if (tokens.length < 2) return false;
+  const group = el.closest('.el-form-item, .ant-form-item, fieldset, [role="group"]');
+  const input = innerTextInput(closestInteractiveRoot(el));
+  const text = [
+    group?.textContent,
+    el.textContent,
+    el.getAttribute('aria-label'),
+    el.getAttribute('name'),
+    el.getAttribute('id'),
+    input?.placeholder,
+  ].filter(Boolean).join(' ');
+  return /籍贯|出生地|户籍|所在地|城市|地区|国家|省|市|地点|面试地点|工作地点/i.test(text);
+}
+
+async function clickMatchingCascaderOption(
+  doc: Document,
+  token: string,
+  options?: FillElementOptions,
+  scopes: Element[] = [],
+): Promise<boolean> {
+  const candidates = collectCascaderOptions(doc, scopes).filter(isVisibleElement);
+  addTrace(options, {
+    stage: 'cascader:options',
+    optionCount: candidates.length,
+    optionSamples: optionSamples(candidates),
+  });
+  const normalizedToken = normalizeToken(token);
+  const match = candidates.find((option) => normalizeToken(option.textContent ?? '') === normalizedToken)
+    ?? candidates.find((option) => optionMatchesText(option.textContent ?? '', token));
   if (!match) return false;
   match.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
   match.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
   clickElement(match);
   await new Promise((resolve) => setTimeout(resolve, 120));
+  addTrace(options, {
+    stage: 'cascader:selected',
+    success: true,
+    selectedOption: (match.textContent ?? '').trim().replace(/\s+/g, ' '),
+  });
   return true;
 }
 
-async function fillCascaderRegion(el: Element, value: string): Promise<boolean> {
+async function fillCascaderRegion(el: Element, value: string, options?: FillElementOptions): Promise<boolean> {
   const tokens = splitRegionTokens(value);
   if (tokens.length === 0) return false;
 
-  const groupedToken = findGroupedRegionToken(el, tokens);
-  if (groupedToken) return fillCustomSelect(el, groupedToken);
+  addTrace(options, {
+    stage: 'region:start',
+    root: describeElement(closestInteractiveRoot(el)),
+    optionSamples: tokens,
+  });
+
+  const groupedToken = findGroupedRegionToken(el, tokens, options);
+  if (groupedToken) return fillCustomSelect(el, groupedToken, options);
 
   if (await fillLinkedRegionSelects(el, tokens)) return true;
 
   const doc = el.ownerDocument;
-  clickElement(closestInteractiveRoot(el));
+  const root = closestInteractiveRoot(el);
+  clickElement(root.querySelector('.el-input__wrapper, .el-select__wrapper, .el-input__inner, input, [role="combobox"]') ?? root);
+  clickElement(root);
   await new Promise((resolve) => setTimeout(resolve, 120));
+  const scopes = collectVisibleOverlayRoots(doc, root, innerTextInput(root));
+  addTrace(options, {
+    stage: 'cascader:scopes-after-open',
+    optionCount: scopes.length,
+    optionSamples: scopes.map(describeElement).slice(0, 8),
+  });
 
   let matched = 0;
   for (const token of tokens) {
-    if (await clickMatchingCascaderOption(doc, token)) matched++;
+    if (await clickMatchingCascaderOption(doc, token, options, scopes)) matched++;
     else break;
   }
 
@@ -408,27 +726,32 @@ async function fillCascaderRegion(el: Element, value: string): Promise<boolean> 
   return matched >= Math.min(tokens.length, 2);
 }
 
-export async function fillElement(el: Element, value: string, inputType: InputType): Promise<boolean> {
+export async function fillElement(
+  el: Element,
+  value: string,
+  inputType: InputType,
+  options: FillElementOptions = {},
+): Promise<boolean> {
   if (!value) return false;
 
   switch (inputType) {
     case 'text': {
       const input = innerTextInput(el);
       if (!input) return false;
-      const filled = await fillText(input, value);
+      const filled = await fillText(input, value, options);
       if (filled) return true;
-      return isChoiceLikeElement(el) ? fillCustomSelect(el, value) : false;
+      return isChoiceLikeElement(el) ? fillCustomSelect(el, value, options) : false;
     }
 
     case 'textarea': {
       const input = innerTextInput(el);
       return input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement
-        ? fillText(input, value)
+        ? fillText(input, value, options)
         : false;
     }
 
     case 'select':
-      return el instanceof HTMLSelectElement ? fillSelect(el, value) : fillCustomSelect(el, value);
+      return el instanceof HTMLSelectElement ? fillSelect(el, value, options) : fillCustomSelect(el, value, options);
 
     case 'radio':
       return el instanceof HTMLInputElement ? fillRadio(el, value) : false;
@@ -437,13 +760,14 @@ export async function fillElement(el: Element, value: string, inputType: InputTy
       return el instanceof HTMLInputElement ? fillCheckbox(el, value) : false;
 
     case 'date':
-      return el instanceof HTMLInputElement ? fillDate(el, value) : fillCustomDate(el, value);
+      return el instanceof HTMLInputElement ? fillDate(el, value, options) : fillCustomDate(el, value, options);
 
     case 'custom-select':
-      return fillCustomSelect(el, value);
+      if (shouldFillAsRegion(el, value)) return fillCascaderRegion(el, value, options);
+      return fillCustomSelect(el, value, options);
 
     case 'cascader-region':
-      return fillCascaderRegion(el, value);
+      return fillCascaderRegion(el, value, options);
 
     case 'contenteditable':
       return fillContenteditable(el as HTMLElement, value);

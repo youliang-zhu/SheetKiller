@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { Settings } from '@/lib/storage/types';
 import { DEFAULT_ALLOWED_DOMAINS } from '@/lib/storage/types';
 import { getSettings, updateSettings } from '@/lib/storage/settings-store';
+import { AI_PROVIDER_DEFAULTS } from '@/lib/ai/provider-defaults';
 import {
   clearDebugRuns,
   getLatestDebugRun,
@@ -51,6 +52,14 @@ export default function SettingsSection() {
     setDebugRuns(await listDebugRuns());
   };
 
+  const handleProviderChange = (provider: Settings['apiProvider']) => {
+    void handleChange({
+      apiProvider: provider,
+      apiBaseUrl: '',
+      apiModel: '',
+    });
+  };
+
   const handleExportLatestDebugRun = async () => {
     const latest = await getLatestDebugRun();
     if (!latest) {
@@ -93,13 +102,14 @@ export default function SettingsSection() {
         <select
           className={inputBase}
           value={settings.apiProvider}
-          onChange={(e) =>
-            handleChange({ apiProvider: e.target.value as Settings['apiProvider'] })
-          }
+          onChange={(e) => handleProviderChange(e.target.value as Settings['apiProvider'])}
         >
           <option value="">{t('settings.apiProvider.none')}</option>
-          <option value="deepseek">DeepSeek</option>
-          <option value="openai">OpenAI</option>
+          {Object.entries(AI_PROVIDER_DEFAULTS).map(([value, provider]) => (
+            <option key={value} value={value}>
+              {provider.label}
+            </option>
+          ))}
         </select>
       </div>
       {settings.apiProvider && (
@@ -111,7 +121,7 @@ export default function SettingsSection() {
               className={inputBase}
               value={settings.apiKey}
               onChange={(e) => handleChange({ apiKey: e.target.value })}
-              placeholder="sk-..."
+              placeholder={AI_PROVIDER_DEFAULTS[settings.apiProvider].apiKeyPlaceholder}
             />
             <p className="text-xs text-slate-500 mt-1.5">{t('settings.apiKeyHint')}</p>
           </div>
@@ -133,7 +143,7 @@ export default function SettingsSection() {
                     className={inputBase}
                     value={settings.apiBaseUrl}
                     onChange={(e) => handleChange({ apiBaseUrl: e.target.value })}
-                    placeholder={settings.apiProvider === 'deepseek' ? 'https://api.deepseek.com/v1' : 'https://api.openai.com/v1'}
+                    placeholder={AI_PROVIDER_DEFAULTS[settings.apiProvider].baseUrl}
                   />
                 </div>
                 <div>
@@ -142,7 +152,7 @@ export default function SettingsSection() {
                     className={inputBase}
                     value={settings.apiModel}
                     onChange={(e) => handleChange({ apiModel: e.target.value })}
-                    placeholder={settings.apiProvider === 'deepseek' ? 'deepseek-chat' : 'gpt-5.5'}
+                    placeholder={AI_PROVIDER_DEFAULTS[settings.apiProvider].model}
                   />
                 </div>
               </div>

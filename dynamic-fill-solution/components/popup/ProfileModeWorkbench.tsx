@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { Settings } from '@/lib/storage/types';
 import { getSettings } from '@/lib/storage/settings-store';
 import { useI18n } from '@/lib/i18n';
+import { AI_PROVIDER_DEFAULTS } from '@/lib/ai/provider-defaults';
 
 export type ProfileEditorMode = 'manual' | 'import' | 'ai';
 
@@ -70,12 +71,9 @@ export default function ProfileModeWorkbench({
         ? t('status.saved')
         : '已就绪';
   const apiConfigured = Boolean(settings?.apiProvider && settings.apiKey);
-  const apiProviderLabel =
-    settings?.apiProvider === 'openai'
-      ? 'OpenAI'
-      : settings?.apiProvider === 'deepseek'
-        ? 'DeepSeek'
-        : '未选择';
+  const apiProviderLabel = settings?.apiProvider
+    ? AI_PROVIDER_DEFAULTS[settings.apiProvider].label
+    : '未选择';
 
   useEffect(() => {
     let alive = true;

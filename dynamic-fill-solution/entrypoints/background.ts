@@ -17,6 +17,7 @@ export default defineBackground(() => {
 async function handleMessage(message: { type: string; [key: string]: unknown }) {
   const { getResume, getActiveResumeId, updateResume } = await import('@/lib/storage/resume-store');
   const { getSettings, updateSettings } = await import('@/lib/storage/settings-store');
+  const { AI_PROVIDER_DEFAULTS } = await import('@/lib/ai/provider-defaults');
   const draftStore = await import('@/lib/storage/draft-store');
   const memStore = await import('@/lib/storage/page-memory-store');
   const formStore = await import('@/lib/storage/form-store');
@@ -75,11 +76,7 @@ async function handleMessage(message: { type: string; [key: string]: unknown }) 
 
       const { factsFromResume } = await import('@/lib/sheetkiller/profile/facts');
       const { planWithLlm } = await import('@/lib/sheetkiller/planner/llm-planner');
-      const providerDefaults = {
-        openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5' },
-        deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-      } as const;
-      const defaults = providerDefaults[settings.apiProvider];
+      const defaults = AI_PROVIDER_DEFAULTS[settings.apiProvider];
       const plan = await planWithLlm(
         fields as never,
         factsFromResume(resume),
@@ -123,11 +120,7 @@ async function handleMessage(message: { type: string; [key: string]: unknown }) 
         return { ok: false, error: 'Configure an AI provider and API key first.' };
       }
 
-      const providerDefaults = {
-        openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5' },
-        deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-      } as const;
-      const defaults = providerDefaults[settings.apiProvider];
+      const defaults = AI_PROVIDER_DEFAULTS[settings.apiProvider];
       const { completeProfileWithAi, mergeAiProfileCompletion } = await import('@/lib/import/ai-profile-completer');
       const completion = await completeProfileWithAi(resumeText, settings, defaults);
       const { patch, filledCount } = mergeAiProfileCompletion(resume, completion);

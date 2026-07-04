@@ -1169,3 +1169,127 @@ AI 负责理解和规划
 ```
 
 这个形态比纯 agent 快，比纯规则泛化能力强，也比预写 manual plan 更适合真实网申表单。主流程要保持简单：资料准备好后，用户只需要点“扫描并填写”，在方案生成后选择“开始填写”或“检查填写方案”，最后回到网页上人工复核和提交。
+
+### 14.13 重大方向判断：以组件适配为主，视觉 AI 作为兜底
+
+2026-07-04 多轮 OPPO 与 Keyence 真站调试后，需要修正对“通用自动填写”的预期。
+
+SheetKiller 的难点不是“把值写进 input”，而是在大量不同网申系统中稳定完成四件事：
+
+```text
+识别字段 -> 理解字段语义 -> 按真实组件协议填写 -> 验证页面是否接受
+```
+
+不同网申网站的差异主要来自前端实现，而不是后端 API：
+
+- 使用不同组件库，例如 Element Plus / Element UI、Ant Design / Ant Design Vue、Arco、Vant / NutUI。
+- 使用自研组件库，例如 Keyence 页面中的 Phoenix input/select/date。
+- 使用不同弹层机制，例如 teleport 到 body 的 dropdown、隐藏缓存弹层、虚拟列表、远程搜索候选。
+- 使用不同受控状态模型，例如 Vue/React 内部状态不等于 DOM input value。
+- 使用不同复杂控件，例如地区级联、日期/月选择器、学校/专业远程 autocomplete、动态新增教育/实习经历。
+
+因此，单一 DOM 填写策略无法覆盖大部分网申页面。纯 GUI 视觉 agent 也不是银弹：它理论上更通用，但慢、贵、不稳定、难 debug，且容易误点提交、删除、保存等高风险操作。
+
+SheetKiller 的长期路线应采用混合架构：
+
+```text
+DOM / 组件 adapter 作为主路径
+AI 负责语义理解、计划生成、异常辅助判断
+视觉 / GUI agent 只作为兜底或调试辅助
+用户始终负责最终复核和提交
+```
+
+#### 产品定位修正
+
+SheetKiller 不应承诺：
+
+```text
+任何网站 100% 全自动填写
+```
+
+更现实、也更有产品价值的定位是：
+
+```text
+在常见网申系统中自动填写大部分重复资料，
+明确标出未填/失败/需检查字段，
+让用户用更少时间完成人工复核。
+```
+
+用户的核心痛点不是“完全不想看表单”，而是：
+
+- 不想反复复制姓名、电话、邮箱、教育经历、实习经历、项目经历。
+- 不想每个平台重新组织同一批资料。
+- 希望快速铺申请，但仍能自己检查最终提交内容。
+
+因此，70%-90% 的高频字段稳定自动填写，已经具备明显价值。剩余字段由用户复核补齐，比追求不可靠的 100% 全自动更安全。
+
+#### 架构方向
+
+后续 executor 不应继续扩展成一个巨大 `if/else` 函数，而应拆成 adapter registry：
+
+```text
+Scanner
+  -> 识别字段、label、上下文、组件特征、重复组结构
+
+Planner
+  -> 根据 profile 和页面字段生成 expectedValue / sourcePath / safety
+
+AdapterRegistry
+  -> NativeAdapter
+  -> ElementPlusAdapter
+  -> AntDesignAdapter
+  -> PhoenixAdapter
+  -> GenericPopupAdapter
+  -> DatePickerAdapter
+  -> CascaderAdapter
+  -> AutocompleteAdapter
+  -> UploadAdapter
+
+Verifier
+  -> 按字段类型和组件结构验证实际页面值
+```
+
+每个 adapter 至少承担：
+
+- detect：判断是否支持当前控件。
+- getRoot：找到真实组件根节点。
+- readLabel / readValue：读取 label 和当前值。
+- fill：按组件协议执行点击、输入、选择、确认。
+- trace：记录弹层、候选、点击、错误信息。
+- verify hints：给 verifier 提供分段值、格式兼容、候选别名等信息。
+
+#### 不一次性穷举所有网站
+
+不建议一次性试图写完所有招聘系统 adapter。原因：
+
+- 没有真实 DOM 和 debug 样本时，adapter 很容易写偏。
+- 同一组件库在不同网站也可能被二次封装。
+- 过早穷举会污染核心逻辑，增加维护成本。
+
+更合理的路线：
+
+1. 先把 adapter registry 和 trace 标准搭好。
+2. 用真实站点样本逐个补 adapter。
+3. 每新增一个 adapter，都加入 debug JSON 回归样本。
+4. 用测试矩阵防止“修 A 坏 B”。
+
+建议优先级：
+
+1. Native HTML。
+2. Element Plus / Element UI。OPPO 作为样本。
+3. Phoenix。Keyence 作为样本。
+4. Ant Design / Ant Design Vue。
+5. Generic popup/select/date/autocomplete fallback。
+6. Workday、Moka、北森、牛客、猎聘等系统按真实样本逐步纳入。
+
+#### Debug 驱动的产品迭代方式
+
+后续每次真实网站失败，都应定位到具体层：
+
+- scan 失败：字段没发现、label 为空、组件 root 错。
+- plan 失败：字段语义匹配错、expectedValue 错。
+- execute 失败：adapter 没打开弹层、候选没出现、点击没同步状态。
+- verify 失败：实际填对但校验规则不理解，例如地区三段各自验证。
+- site validation 失败：网站业务规则不接受，例如账号占用、必填依赖、远程库无候选。
+
+这个机制比“截图 + 主观描述”更适合长期产品测试。SheetKiller 的竞争力应来自可复现、可解释、可逐步学习，而不是一次性声称可以自动理解所有网页。

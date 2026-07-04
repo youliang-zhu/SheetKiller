@@ -1,4 +1,5 @@
 import type { FieldCandidate } from '@/lib/capture/candidate';
+import type { ApiProvider } from '@/lib/ai/provider-defaults';
 
 // ─── Resume Meta ─────────────────────────────────────────────────────────────
 
@@ -227,7 +228,7 @@ export interface Resume {
 export interface Settings {
   toolbarPosition: { x: number; y: number };
   apiKey: string;
-  apiProvider: 'deepseek' | 'openai' | '';
+  apiProvider: ApiProvider | '';
   apiBaseUrl: string;
   apiModel: string;
   skipSensitive: boolean;

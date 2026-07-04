@@ -68,7 +68,7 @@ const PLAN_PHASES: Array<{
   {
     id: 'ai',
     title: 'AI 核对资料',
-    description: '把页面字段和本地资料进行匹配。',
+    description: '把页面字段和已保存资料进行匹配。',
   },
   {
     id: 'build',
@@ -272,23 +272,6 @@ export default function App() {
     }
   }
 
-  async function handleRuleFill() {
-    setState('filling');
-    setError('');
-    await persistWorkflow({ state: 'filling', phase: 'idle', error: '' });
-    try {
-      const tab = await getActiveTab();
-      await sendTabMessageWithRetry(tab, { type: 'TRIGGER_FILL' });
-      setState('done');
-      await persistWorkflow({ state: 'done', phase: 'idle', tab });
-    } catch (err) {
-      const message = humanizeError(err);
-      setError(message);
-      setState('error');
-      await persistWorkflow({ state: 'error', phase: 'idle', error: message });
-    }
-  }
-
   async function handleScanAndPlan() {
     setState('planning');
     setPlanPhase('connect');
@@ -332,6 +315,11 @@ export default function App() {
       const fields = scanRes.data as SerializableFieldInventoryItem[];
       fieldsForDebug = fields;
       setScannedCount(fields.length);
+      try {
+        await sendTabMessageWithRetry(tab, { type: 'SHEETKILLER_MARK_PLANNING_FIELDS' });
+      } catch {
+        // Visual planning highlights are helpful but should not block planning.
+      }
 
       phase = 'plan';
       setPlanPhase('ai');
@@ -394,6 +382,11 @@ export default function App() {
       setState('error');
       setPlanPhase('idle');
       if (tabForDebug) {
+        try {
+          await sendTabMessageWithRetry(tabForDebug, { type: 'SHEETKILLER_CLEAR_PLANNING_HIGHLIGHTS' });
+        } catch {
+          // Ignore cleanup failures; the popup error remains the source of truth.
+        }
         await persistWorkflow({
           state: 'error',
           phase: 'idle',
@@ -450,6 +443,22 @@ export default function App() {
   const isEmpty = !stats || stats.filled === 0;
   const previewItems = planData?.plan.slice(0, 10) ?? [];
   const workflowSteps = ['扫描', '规划', '填写', '复核'];
+  const planningProgress = planPhase === 'connect'
+    ? 16
+    : planPhase === 'scan'
+      ? 42
+      : planPhase === 'ai'
+        ? 72
+        : planPhase === 'build'
+          ? 92
+          : 8;
+  const planningHint = planPhase === 'ai'
+    ? `已识别 ${scannedCount} 个可填写区域，正在进行一次 AI 核对请求。`
+    : planPhase === 'scan'
+      ? '正在读取当前页面上的输入框、下拉框和日期控件。'
+      : planPhase === 'build'
+        ? 'AI 已返回结果，正在整理填写计划和复核项目。'
+        : '正在确认扩展可以访问当前页面。';
   const activeStep = state === 'planning'
     ? (planPhase === 'ai' || planPhase === 'build' ? 1 : 0)
     : state === 'planned' || state === 'preview'
@@ -465,11 +474,8 @@ export default function App() {
   return (
     <I18nContext.Provider value={i18n}>
       <div className="w-[420px] bg-[var(--sk-bg)] text-[var(--sk-text)] flex flex-col">
-        <div className="px-5 py-4 border-b border-[var(--sk-border)] bg-white flex items-center gap-2">
-          <span className="sk-display text-xl font-bold text-[var(--sk-text)]">SheetKiller</span>
-          <span className="rounded-full bg-[#eff6ff] px-2.5 py-1 text-[11px] font-semibold text-[var(--sk-primary)]">AI 表单助手</span>
-          <div className="flex-1" />
-          <span className="text-[11px] text-[var(--sk-muted)]">本地资料</span>
+        <div className="px-6 py-4 border-b border-[var(--sk-border)] bg-white flex items-center">
+          <span className="sk-display text-2xl font-bold text-[var(--sk-text)]">SheetKiller</span>
         </div>
 
         <div className="m-4 rounded-[28px] bg-white p-5 shadow-[0_16px_42px_rgba(15,23,42,0.10)] ring-1 ring-[var(--sk-border)]">
@@ -544,6 +550,40 @@ export default function App() {
                   </div>
                 </div>
                 <div className="h-8 w-8 shrink-0 rounded-full border-2 border-[#bfdbfe] border-t-[var(--sk-primary)] animate-spin" />
+              </div>
+              <div className="mt-3 rounded-2xl border border-[#dbeafe] bg-white px-3 py-3 shadow-sm">
+                <div className="flex items-center justify-between gap-3 text-[11px] font-semibold text-[var(--sk-muted)]">
+                  <span>{planningHint}</span>
+                  <span className="shrink-0 text-[var(--sk-primary)]">{planningProgress}%</span>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-[#edf2f8]">
+                  <div
+                    className="h-full rounded-full bg-[var(--sk-primary)] transition-all duration-300"
+                    style={{ width: `${planningProgress}%` }}
+                  />
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-1.5 text-center text-[10px] font-semibold">
+                  <div className="rounded-full bg-[#eff6ff] px-2 py-1 text-[var(--sk-primary)]">
+                    {scannedCount ? `${scannedCount} 个字段` : '识别中'}
+                  </div>
+                  <div className={`rounded-full px-2 py-1 ${
+                    planPhase === 'ai'
+                      ? 'bg-[#eff6ff] text-[var(--sk-primary)] animate-pulse'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}>
+                    单次 AI 请求
+                  </div>
+                  <div className={`rounded-full px-2 py-1 ${
+                    scannedCount
+                      ? 'bg-[#eff6ff] text-[var(--sk-primary)]'
+                      : 'bg-slate-100 text-slate-500'
+                  }`}>
+                    页面蓝框标记
+                  </div>
+                </div>
+                <div className="mt-2 text-[11px] leading-5 text-[var(--sk-muted)]">
+                  当前页面里的蓝色描边表示已被纳入本次规划；等待期间可以放心，它正在把这些字段和资料逐项匹配。
+                </div>
               </div>
               <div className="mt-3 space-y-2">
                 {PLAN_PHASES.map((phase, index) => {
@@ -656,28 +696,18 @@ export default function App() {
           </div>
         )}
 
-        <div className="mx-4 mb-3 flex gap-2">
+        <div className="mx-4 mb-4 flex gap-2">
           <button
             onClick={() => openDashboard()}
-            className="flex-1 py-2.5 px-3 rounded-2xl text-xs font-semibold bg-white hover:bg-[#f8fbff] text-[var(--sk-text)] border border-[var(--sk-border)] transition-colors shadow-sm"
+            className="flex-1 py-3 px-3 rounded-2xl text-xs font-semibold bg-white hover:bg-[#f8fbff] text-[var(--sk-text)] border border-[var(--sk-border)] transition-colors shadow-sm"
           >
             {t('popup.edit')}
           </button>
           <button
             onClick={openApiSettings}
-            className="flex-1 py-2.5 px-3 rounded-2xl text-xs font-semibold bg-white hover:bg-[#f8fbff] text-[var(--sk-text)] border border-[var(--sk-border)] transition-colors shadow-sm"
+            className="flex-1 py-3 px-3 rounded-2xl text-xs font-semibold bg-white hover:bg-[#f8fbff] text-[var(--sk-text)] border border-[var(--sk-border)] transition-colors shadow-sm"
           >
             API 设置
-          </button>
-        </div>
-
-        <div className="mx-4 mb-4">
-          <button
-            onClick={handleRuleFill}
-            disabled={!activeResume || state === 'planning' || state === 'filling'}
-            className="w-full py-2.5 rounded-2xl text-xs font-semibold bg-[#eff6ff] hover:bg-[#dbeafe] text-[var(--sk-primary)] border border-[#dbeafe] disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            规则填写兜底
           </button>
         </div>
 

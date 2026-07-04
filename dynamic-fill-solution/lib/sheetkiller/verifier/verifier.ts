@@ -73,6 +73,49 @@ function regionMatches(expected: string, actual: string): boolean {
   return tokens.length > 0 && tokens.every((token) => actualNorm.includes(token));
 }
 
+function splitRegionTokens(value: string): string[] {
+  return value
+    .split(/[,\s/|>，、-]+/)
+    .map((token) => token.replace(/省|市|区|县/g, '').trim())
+    .filter(Boolean);
+}
+
+function isGroupedRegionSubfield(field: FieldInventoryItem): boolean {
+  const group = field.element.closest('.el-form-item, .ant-form-item, fieldset, [role="group"]');
+  if (!group) return false;
+  const text = `${group.textContent ?? ''} ${field.label} ${field.placeholder} ${field.context}`;
+  if (!/籍贯|出生地|户籍|所在地|城市|地区|国家|省|市|地点|面试地点|工作地点/i.test(text)) return false;
+
+  const primary = Array.from(group.querySelectorAll<Element>(
+    'select, .el-select, .el-cascader, .ant-select, [role="combobox"]',
+  ));
+  const fallbackInputs = Array.from(group.querySelectorAll<Element>('input[placeholder]'))
+    .filter((input) => !primary.some((root) => root === input || root.contains(input) || input.contains(root)));
+  return primary.length + fallbackInputs.length > 1;
+}
+
+function regionSubfieldMatches(expected: string, actual: string): boolean {
+  const expectedTokens = splitRegionTokens(expected);
+  const actualTokens = splitRegionTokens(actual);
+  const actualNorm = normalizeOptionText(actual);
+  if (!actualNorm || expectedTokens.length < 2) return false;
+
+  return expectedTokens.some((token) => {
+    const tokenNorm = normalizeOptionText(token);
+    return tokenNorm && (
+      actualNorm === tokenNorm
+      || actualNorm.includes(tokenNorm)
+      || tokenNorm.includes(actualNorm)
+    );
+  }) || actualTokens.some((actualToken) => {
+    const actualTokenNorm = normalizeOptionText(actualToken);
+    return expectedTokens.some((expectedToken) => {
+      const expectedTokenNorm = normalizeOptionText(expectedToken);
+      return actualTokenNorm && expectedTokenNorm && actualTokenNorm === expectedTokenNorm;
+    });
+  });
+}
+
 export function verifyFieldValue(
   field: FieldInventoryItem,
   expectedValue: string,
@@ -90,7 +133,10 @@ export function verifyFieldValue(
 
   let matched = false;
   if (field.inputType === 'date') matched = dateComparable(expectedValue) === dateComparable(actualValue);
-  else if (field.inputType === 'cascader-region') matched = regionMatches(expectedValue, actualValue);
+  else if (field.inputType === 'cascader-region') {
+    matched = regionMatches(expectedValue, actualValue)
+      || (isGroupedRegionSubfield(field) && regionSubfieldMatches(expectedValue, actualValue));
+  }
   else if (field.inputType === 'select' || field.inputType === 'custom-select') matched = optionLikeMatches(expectedValue, actualValue);
   else matched = normalize(expectedValue) === normalize(actualValue);
 

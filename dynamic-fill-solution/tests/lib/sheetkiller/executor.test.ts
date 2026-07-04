@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { executeFillPlan } from '@/lib/sheetkiller/executor/dynamic-fill';
 import type { FieldInventoryItem, FillPlanItem } from '@/lib/sheetkiller/types';
 
-function field(element: Element): FieldInventoryItem {
+function field(element: Element, overrides: Partial<FieldInventoryItem> = {}): FieldInventoryItem {
   return {
     fieldId: 'name',
     element,
@@ -21,6 +21,7 @@ function field(element: Element): FieldInventoryItem {
     required: false,
     visible: true,
     source: 'generic-scan',
+    ...overrides,
   };
 }
 
@@ -90,5 +91,95 @@ describe('SheetKiller dynamic fill executor', () => {
     expect(result.needsInput).toBe(1);
     expect(input.value).toBe('');
     expect(result.reports[0].status).toBe('needs_user_input');
+  });
+
+  it('classifies school remote candidates as user-input instead of failed fill', async () => {
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    const plan: FillPlanItem[] = [{
+      fieldId: 'school',
+      label: '学校名称',
+      profileSource: 'education[0].school',
+      sourcePath: 'education[0].school',
+      expectedValue: '洛桑联邦理工学院',
+      strategy: 'custom-select',
+      confidence: 'high',
+      reason: 'School label matched.',
+      source: 'llm',
+      safety: 'fill',
+    }];
+
+    const result = await executeFillPlan([
+      field(input, {
+        fieldId: 'school',
+        inputType: 'custom-select',
+        label: '学校名称',
+        placeholder: '请输入学校名称',
+      }),
+    ], plan);
+
+    expect(result.filled).toBe(0);
+    expect(result.needsInput).toBe(1);
+    expect(input.value).toBe('');
+    expect(result.reports[0].status).toBe('needs_user_input');
+    expect(result.reports[0].reason).toContain('复杂远程候选控件');
+  });
+
+  it('classifies interview location candidates as user-input instead of failed fill', async () => {
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    const plan: FillPlanItem[] = [{
+      fieldId: 'interview-city',
+      label: '意向面试地点',
+      profileSource: 'basic.currentCity',
+      sourcePath: 'basic.currentCity',
+      expectedValue: '中国 广东省 广州市',
+      strategy: 'custom-select',
+      confidence: 'high',
+      reason: 'Location label matched.',
+      source: 'llm',
+      safety: 'fill',
+    }];
+
+    const result = await executeFillPlan([
+      field(input, {
+        fieldId: 'interview-city',
+        inputType: 'custom-select',
+        label: '意向面试地点',
+      }),
+    ], plan);
+
+    expect(result.filled).toBe(0);
+    expect(result.needsInput).toBe(1);
+    expect(result.reports[0].status).toBe('needs_user_input');
+    expect(result.reports[0].reason).toContain('复杂远程候选控件');
+  });
+
+  it('still fills plain school text fields', async () => {
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    const plan: FillPlanItem[] = [{
+      fieldId: 'school-text',
+      label: '学校名称',
+      profileSource: 'education[0].school',
+      sourcePath: 'education[0].school',
+      expectedValue: '洛桑联邦理工学院',
+      strategy: 'text',
+      confidence: 'high',
+      reason: 'Plain text school field.',
+      source: 'llm',
+      safety: 'fill',
+    }];
+
+    const result = await executeFillPlan([
+      field(input, {
+        fieldId: 'school-text',
+        inputType: 'text',
+        label: '学校名称',
+      }),
+    ], plan);
+
+    expect(result.filled).toBe(1);
+    expect(input.value).toBe('洛桑联邦理工学院');
   });
 });

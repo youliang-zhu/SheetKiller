@@ -1020,3 +1020,505 @@ npm run build
 3. 国籍、意向面试地点、联合办学等 custom-select 是否从空值变成已选中。
 4. 地区/籍贯在不同站点是否被错误拆分；如果出现误拆，优先按站点 DOM 特征收窄规则。
 5. 页面业务校验错误（例如证件号已被占用）应继续和自动填写失败分开记录。
+## 2026-07-04 复盘：OPPO 第三轮 debug 后重新审视方案
+
+调试包：
+- `sheetkiller-debug-2026-07-04T16-33-21-725Z_careers.oppo.com_gpzc4d.json`
+
+截图现象：
+- 用户侧仍能看到多个红框，尤其是出生日期、国籍/籍贯/意向面试地点、学校名称、起止时间、联合办学等。
+
+执行统计：
+- `filled`: 17
+- `failed`: 14
+- `needsInput`: 10
+- `skipped`: 0
+
+注意：这次不是“全部失败”。上一轮修复实际让一批字段变好了：
+- 姓名、电话区号、手机号、邮箱成功。
+- 学历 `硕士 -> 硕士（Master）` 已被正确识别为成功。
+- 受教育类型、是否交流学习、专业类别、专业、导师姓名成功。
+- 公司、项目、职责类文本/textarea 成功。
+
+### 本轮失败集中在四类组件
+
+1. 日期/月控件全部失败
+   - `field-3` 出生日期，expected `2002-11-24`
+   - `field-20/21` 教育起止时间，expected `2025-09 / 2026-06`
+   - `field-31/32` 实习起止时间，expected `2025-04 / 2025-08`
+   - `field-37/38` 项目起止时间，expected `2025-12 / 2026-05`
+   - DOM 特征：`div.el-date-editor`，`role="combobox"`，不是原生 input。
+   - 结论：上一轮“写内部 input + Enter/change/blur”没有进入 Element Plus date picker 的 Vue model。必须改成真实点击日期/月面板，或用 Vue/Element Plus 组件事件协议触发。
+
+2. 普通 select / custom-select 仍有空值
+   - `field-7` 国籍，expected `中国`，actual empty。
+   - `field-11` 意向面试地点，expected `中国 广东省 广州市`，actual empty。
+   - `field-24` 联合办学，expected `否`，actual empty。
+   - 结论：上一轮“两阶段打开下拉 + 候选匹配”只适用于部分 Element Plus select。对于这些控件，可能存在：
+     - 下拉是 remote/lazy options；
+     - 需要点击外层 `.el-select` 而不是 input；
+     - options 不是当前 DOM 里已有，而是打开后异步请求；
+     - 当前 debug 没记录候选数量和候选文本，无法判断是“没打开”还是“打开但匹配失败”。
+
+3. 地区/籍贯多段控件仍失败
+   - `field-8/9/10` 籍贯三段，expected `中国 湖南省 娄底市`。
+   - 截图上三个子控件仍为空。
+   - 上一轮拆分策略没有奏效，核心原因是 scanner 给每个子 input 的 `field.element` 是内部 input，而不是 `.el-form-item` 下的组件根节点；执行器尝试从 input 往上找 group，但真实 DOM 结构与测试模拟不一致，导致没有稳定找到 sibling controls 或没有正确选择 lazy options。
+   - 用户提醒“地区/籍贯级联不同网站不一样”是对的：这块不能硬编码 OPPO 三段，应该抽象成 `GroupedControl`，先识别一个 form-item 内的多个子控件，再在执行时按组顺序填。
+
+4. 学校名称 autocomplete 失败
+   - `field-14` 学校名称，expected `洛桑联邦理工学院`，actual empty。
+   - DOM 特征：`custom-select`，input `readOnly: true`，placeholder `请输入学校名称`。
+   - 结论：这不是普通文本框，也不是普通 select。很可能是远程学校库 autocomplete，必须模拟“打开搜索弹层 -> 输入关键词/可能需要点击触发 -> 等远程候选 -> 选候选”。如果 input 是 readonly，直接 set value 必然失败。
+
+### 为什么上一轮修改不奏效
+
+上一轮修复方向偏“通用 DOM 级别”：
+- 写 input value。
+- 派发 focus/input/change/blur/Enter。
+- 点击 visible option。
+- 尝试在同一个 form item 内拆分地区 token。
+
+但 OPPO 页面的关键控件是 Vue + Element Plus 受控组件。它们真正生效通常依赖组件内部状态和特定事件链，而不是 DOM input value 本身。直接 setNativeValue 只能改变可见 DOM，不能保证：
+- Vue model 更新；
+- 表单校验状态更新；
+- 下一级联选项加载；
+- remote option 被选择；
+- date picker 面板确认值。
+
+所以这不是大方向错，而是执行器的抽象层级不够。我们不能只做“HTML 表单自动填写器”，必须做“组件库适配器”。
+
+### 对方案性质的判断
+
+大方向没有错：
+- 扫描页面可填区域。
+- LLM/规则只负责给每个可填区域提供候选值。
+- 执行器尽量填写。
+- 用户最终复核。
+
+错的是当前执行层过于乐观：
+- 把 Element Plus / Ant Design / remote autocomplete 当成普通 input/select。
+- 缺少组件级操作协议。
+- debug 信息还不够证明每一步到底卡在哪里。
+
+这已经不是“一两个小 bug”，而是需要把执行器升级为分层架构：
+1. DOM 原生控件填充器。
+2. Element Plus 组件适配器。
+3. Ant Design 组件适配器。
+4. Remote autocomplete / lazy cascader 适配器。
+5. 每一步记录调试遥测：打开是否成功、候选数量、候选文本、点击了哪个候选、点击后 actual value。
+
+### 下一步修复建议
+
+优先级 1：增强 debug，而不是继续盲改
+- custom-select 填充时记录：
+  - root selector/class；
+  - 是否打开下拉；
+  - option count；
+  - 前 20 个 option 文本；
+  - 匹配 token；
+  - 点击后 input value；
+  - 是否出现 `.el-form-item__error`。
+- date 填充时记录：
+  - panel 是否出现；
+  - panel class；
+  - 是否 month picker/date picker；
+  - 可点击 year/month/day 候选。
+
+优先级 2：实现 Element Plus 专用 adapter
+- `fillElementPlusSelect`
+- `fillElementPlusCascader`
+- `fillElementPlusDate`
+- `fillElementPlusMonth`
+- `fillElementPlusAutocomplete`
+
+优先级 3：把地区组升级为 group-level plan/execution
+- scanner 识别同一个 `.el-form-item` 内的多个子控件，生成 group metadata。
+- executor 不再让每个子控件独立猜 token，而是一次性填完整 group。
+
+优先级 4：修复 debug JSON 可解析性
+- 当前 PowerShell `ConvertFrom-Json` 对该包解析失败，说明导出内容可能含有某些未正确处理的字符或结构。
+- 后续应在导出前用 `JSON.stringify` 严格序列化，并在测试中 round-trip parse。
+
+## 2026-07-04 实施记录：组件交互 telemetry 与 Element Plus 保守增强
+
+本轮没有继续盲目“猜 OPPO 的某个选择器”，而是先把执行器改成可观测。之前的问题不是产品方向错，而是执行器对 Element Plus 这类受控组件的抽象太低：只知道 `set value + input/change/blur`，不知道下拉有没有打开、候选项有没有出现、选中了哪一项、日期面板是否出现、站点自身校验有没有报错。
+
+### 已落地 1：填充器 interactionTrace
+
+`fillElement()` 新增可选 `trace` 参数。执行器每填一个字段都会把组件交互步骤写入 debug item：
+
+- `text:start` / `text:verify`
+- `native-select:start` / `native-select:selected`
+- `custom-select:start`
+- `custom-select:after-open`
+- `custom-select:type-filter`
+- `custom-select:after-filter`
+- `custom-select:enter-fallback`
+- `custom-date:start`
+- `custom-date:open-panel`
+- `custom-date:type-candidate`
+- `region:start`
+- `region:group-detected`
+- `region:group-token`
+- `cascader:options`
+- `cascader:selected`
+
+这些 trace 会记录安全的结构化信息：root/input 描述、readonly/disabled 状态、候选项数量、候选项样本、选中的候选项、日期面板数量与面板 class。不会额外输出 API key。
+
+### 已落地 2：debug item 记录页面校验错误
+
+`DynamicFillDebugItem` 新增：
+
+- `interactionTrace`
+- `siteValidationErrors`
+
+后续如果页面显示类似“学校名称不能为空”“该账号已被使用”“请选择所在地”，debug JSON 会把这些业务校验和自动填写失败分开记录。这样我们能区分：
+
+- 自动填写器没有成功操作控件；
+- 自动填写器填了值，但页面业务规则不接受；
+- verifier 误判；
+- 用户资料确实缺字段。
+
+### 已落地 3：Element Plus 自定义下拉保守增强
+
+custom-select 现在采用两阶段：
+
+1. 先点击组件外壳/真实触发区，打开下拉，扫描当前可见候选项。
+2. 若未找到，再向内部 input 派发搜索词，等待异步候选，然后再次扫描候选项。
+
+对 readonly input 做了保守处理：如果需要搜索，会临时取消 readonly 来派发 input 事件，然后恢复 readonly。这主要用于学校名称这类远程 autocomplete。下次 debug 可以确认候选项是否真正出现。
+
+### 已落地 4：Element Plus 日期控件不再被 readonly 直接拦截
+
+旧逻辑遇到 readonly date input 会直接失败。现在会：
+
+- 点击日期组件外壳和触发区；
+- 记录日期面板是否出现；
+- 对候选日期格式逐个写入并触发 Enter/change/blur；
+- 即使 input 是 readonly，也会临时派发输入事件再恢复。
+
+注意：这仍不是完整的“点击年月日面板”实现。如果下次 trace 显示面板出现但输入仍未同步 Vue model，就要继续做 `fillElementPlusDate/month` 面板点击版。
+
+### 已落地 5：地区组识别范围扩大
+
+`findGroupedRegionToken()` 不再只找 `.el-select/.el-cascader/[role=combobox]`，也会把同一 form item 内的 `input[placeholder]` 纳入 sibling 控件判断。这样 OPPO 这类“看起来是三段下拉，但 DOM 暴露的是 input”的结构更容易被识别。
+
+### 测试验证
+
+- 新增/更新 `tests/lib/engine/fillers-extra.test.ts`
+  - custom-select trace 会记录候选项样本；
+  - readonly custom date 不会在交互前直接失败；
+  - 地区组按子控件位置拆分仍通过。
+- 验证结果：
+  - `npm test -- --run tests/lib/engine/fillers-extra.test.ts` 通过，4 个测试通过。
+  - `npm test` 通过，38 个测试文件、275 个测试全部通过。
+
+### 下一次真实 OPPO 测试重点
+
+下一次 debug JSON 需要重点看：
+
+1. 失败的国籍/联合办学/面试地点字段是否有 `custom-select:after-open.optionCount`。
+2. 如果 optionCount 为 0，是下拉没打开，还是远程候选没回来。
+3. 学校名称是否出现 `custom-select:type-filter`，以及 `after-filter` 是否有学校候选。
+4. 日期字段是否出现 `custom-date:open-panel.panelCount > 0`。
+5. 如果日期 input 显示写入成功但页面仍红框，要做 Element Plus date picker 面板点击适配。
+6. 地区/籍贯字段是否出现 `region:group-detected`，如果没有，说明 OPPO 真实 DOM 的 group 边界不是 `.el-form-item`，需要从 debug 里的 element/root 信息继续收敛。
+
+## 2026-07-04 分析记录：OPPO 第四轮 debug，telemetry 暴露真实根因
+
+调试包：
+- `sheetkiller-debug-2026-07-04T17-01-43-091Z_careers.oppo.com_tqp9lc.json`
+
+解析状态：
+- JSON 可被 PowerShell `ConvertFrom-Json` 正常解析，debug 导出格式本轮正常。
+
+执行统计：
+- 总字段：41
+- `filled_and_verified`: 24
+- `needs_user_input`: 10
+- `filled_but_mismatch`: 4
+- `failed_to_fill`: 3
+- 总失败/不匹配：7
+
+与上一轮相比：
+- 失败数从 14 降到 7。
+- 所有日期/月字段已经成功，包括出生日期、教育起止时间、实习起止时间、项目起止时间。
+- 文本、textarea、电话、邮箱、学历、受教育类型、交流学习、专业类别、专业、导师、实习/项目内容等大部分成功。
+
+### 新发现的核心根因
+
+本轮 telemetry 显示，当前自定义下拉不是“候选匹配逻辑稍微不准”，而是打开和读取了错误的候选池。
+
+典型 trace：
+- 国籍字段 `field-7` 的 root 是 `div.el-input.el-input--suffix`，不是外层 `.el-select`。
+- 打开后 `optionCount=3301`，候选样本前几项是：
+  - `中国-居民身份证`
+  - `中国-港澳居民来往内地通行证`
+  - `中国-台湾居民来往大陆通行证`
+  - `护照`
+  - `中国（+86）`
+- 这显然不是“国籍”字段自己的候选，而是页面上全局/隐藏/旧弹层里的候选项。
+
+成功字段也有同样现象：
+- 学历、受教育类型、交流学习、专业类别等成功字段也显示 `optionCount=3301`。
+- 它们不是因为策略完全正确，而是误打误撞在全局候选池中找到了匹配项。
+
+### 为什么会发生
+
+1. `closestInteractiveRoot()` 现在把最近的 `.el-input` 当成 root。
+   - 对 Element Plus 来说，真实组件根通常是 `.el-select`、`.el-cascader`、`.el-date-editor`。
+   - `input.closest('.el-select, ..., .el-input')` 会返回最近的 `.el-input`，而不是更外层 `.el-select`。
+   - 结果是点击到了输入框包装层，但没有稳定打开当前字段对应的 select/cascader。
+
+2. `waitForOptions()` 的可见性判断太弱。
+   - 当前 `isVisibleElement()` 只看元素自身 `display/visibility`。
+   - 如果隐藏弹层的父元素不可见，但子 option 自己没有 `display:none`，仍可能被当成可见。
+   - 所以它把页面上大量隐藏/缓存/旧弹层候选都采进来，形成 `optionCount=3301`。
+
+3. `clickMatchingOption()` 没有限定“当前刚打开的弹层”。
+   - 它从整个 `document` 搜候选。
+   - 多个 Element Plus 弹层/缓存 DOM 同时存在时，会点到非当前字段的候选。
+
+### 7 个剩余问题的归因
+
+1. `field-7` 国籍
+   - 期望：中国。
+   - 实际为空。
+   - trace 选择了 `中国-居民身份证`，说明点击到了证件类型候选池，不是国籍候选池。
+
+2. `field-8/9/10` 籍贯三段
+   - group 被识别到了，但 controlRoots 数量是 6：`.el-select` 和内部 `.el-input` 被重复计入。
+   - `field-10` 出现 `tokenIndex=4`，超出 `中国/湖南省/娄底市` 三个 token，说明 group 子控件去重逻辑不对。
+   - 候选池依然是证件类型/全局候选池。
+
+3. `field-11` 意向面试地点
+   - 期望：中国 广东省 广州市。
+   - trace 只选择了 `中国`，且候选池仍是全局池。
+   - 这类字段可能本质是级联，不应按普通 custom-select 一次性填完整字符串。
+
+4. `field-14` 学校名称
+   - 期望：洛桑联邦理工学院。
+   - input 是 readonly，placeholder 已经是学校名，但实际值为空。
+   - trace 搜索后候选池仍是全局旧候选，没有学校候选。
+   - 说明学校控件不是普通 input，也不是当前下拉被正确打开；需要真实 autocomplete/popup adapter。
+
+5. `field-24` 是否联合办学
+   - trace 显示点到了 `否`，但 after 仍为空。
+   - 这说明点击的 `否` 很可能不是当前字段所属弹层里的 `否`，或者点击后没有触发当前 Vue model。
+
+### 下一轮修复方向
+
+优先级 1：修 `closestInteractiveRoot()`
+- 不要让 `.el-input` 抢占 `.el-select/.el-cascader/.el-date-editor`。
+- 应按组件优先级查找：
+  1. `.el-select`
+  2. `.el-cascader`
+  3. `.el-autocomplete`
+  4. `.el-date-editor`
+  5. `.ant-select/.ant-picker`
+  6. `[role=combobox]`
+  7. 最后才是 `.el-input`
+
+优先级 2：修候选可见性
+- `isVisibleElement()` 需要检查 `getBoundingClientRect()`、offsetParent、祖先 display/visibility、aria-hidden。
+- 隐藏弹层、旧弹层、尺寸为 0 的候选不能参与匹配。
+
+优先级 3：候选池必须绑定当前弹层
+- 点击某个 select 后，记录点击前/后的可见 dropdown。
+- 优先只在“新打开或当前 active 的 dropdown”里找候选，而不是扫整个 document。
+- Element Plus 可重点找 `.el-popper`、`.el-select-dropdown`、`.el-cascader__dropdown` 中可见且最近打开的那个。
+
+优先级 4：地区组去重
+- group 内不能同时把 `.el-select` 和其内部 `.el-input` 作为两个控件。
+- 应先收集 `.el-select/.el-cascader` 作为主控件，再只把没有主控件祖先的裸 `input[placeholder]` 作为 fallback。
+
+优先级 5：级联字段区分
+- `意向面试地点`、`籍贯` 这类包含国家/省/市的值，不应按单个 custom-select 找完整字符串。
+- 如果字段 label/上下文命中地点、籍贯、所在地、城市，且值包含多个 region token，应走 region/cascader adapter。
+
+## 2026-07-04 实施记录：修复 Element Plus root、候选池与地区组去重
+
+本轮针对 OPPO 第四轮 debug 中暴露的 `optionCount=3301` 问题做执行器修复。核心目标是避免从全局/隐藏/旧弹层里误选候选项。
+
+### 已修复 1：组件 root 优先级
+
+`closestInteractiveRoot()` 改为按优先级逐级查找：
+
+1. `.el-select`
+2. `.el-cascader`
+3. `.el-autocomplete`
+4. `.el-date-editor`
+5. `.ant-select`
+6. `.ant-picker`
+7. `[role="combobox"]`
+8. `.el-input`
+
+这样 input 位于 `.el-input` 内、而 `.el-input` 又位于 `.el-select` 内时，会拿 `.el-select` 作为组件根，不会被内部包装层抢走。
+
+### 已修复 2：隐藏旧弹层过滤
+
+`isVisibleElement()` 不再只看元素自身 `display/visibility`，现在会检查：
+
+- 元素是否仍连接在 DOM；
+- 自身及祖先是否 `hidden` / `aria-hidden=true`；
+- 自身及祖先是否 `display:none` / `visibility:hidden` / `opacity:0`；
+- 浏览器真实环境下如有 client rect，则排除尺寸为 0 的元素。
+
+这可以减少隐藏候选、缓存候选、旧弹层候选被误采样。
+
+### 已修复 3：候选池绑定当前可见弹层
+
+custom-select 不再直接从整个 document 搜候选。现在流程是：
+
+1. 点击组件 root/trigger；
+2. 采集当前可见的 overlay roots；
+3. 优先使用 `aria-controls` / `aria-owns` 指向的受控弹层；
+4. 其次使用当前可见的 `.el-select-dropdown`、`.el-popper`、`.el-cascader__dropdown`、`.el-autocomplete-suggestion`、Ant dropdown 等；
+5. 只在这些 scopes 内查找候选项。
+
+trace 新增：
+
+- `custom-select:scopes-after-open`
+- `custom-select:scopes-after-filter`
+- `cascader:scopes-after-open`
+
+下一次 debug 里如果 `custom-select:after-open.optionCount` 仍然非常大，就说明 OPPO 当前字段对应的 visible scope 仍然没有被正确隔离。
+
+### 已修复 4：候选匹配优先精确匹配
+
+候选匹配改为先找 normalized exact match，再做 loose includes match。
+
+例如期望 `中国` 时，会优先选择文本正好是 `中国` 的选项，而不是先命中 `中国-居民身份证`。
+
+### 已修复 5：地区组去重
+
+group 内控件收集改成两阶段：
+
+1. 先收集主控件：`.el-select`、`.el-cascader`、`.ant-select`、原生 `select`、`[role=combobox]`。
+2. 再把没有主控件祖先的裸 `input[placeholder]` 作为 fallback。
+
+这避免同一个 Element Plus 控件同时被 `.el-select` 和内部 `.el-input` 计数，修复籍贯三段被误识别成 6 个控件的问题。
+
+### 已修复 6：地点类 custom-select 自动转地区/级联策略
+
+如果字段上下文命中：
+
+- 籍贯
+- 出生地
+- 户籍
+- 所在地
+- 城市
+- 地区
+- 国家/省/市
+- 地点/面试地点/工作地点
+
+并且目标值拆出来是多段地区 token，则 `custom-select` 会改走 `fillCascaderRegion()`，不再按单个下拉去找完整字符串。
+
+这主要针对 `意向面试地点 = 中国 广东省 广州市` 这类字段。
+
+### 测试验证
+
+新增/更新 `tests/lib/engine/fillers-extra.test.ts`：
+
+- 确认 Element Plus input 内层包装不会抢走 `.el-select` root。
+- 确认隐藏旧 dropdown 中的候选不会被点击。
+- 保留 custom-select trace、readonly date、地区组拆分测试。
+
+验证结果：
+
+- `npm test -- --run tests/lib/engine/fillers-extra.test.ts` 通过，6 个测试通过。
+- `npm test` 通过，38 个测试文件、277 个测试全部通过。
+- `npm run build` 通过。
+
+### 下一次 OPPO 实验重点
+
+重点看新的 debug JSON：
+
+1. `custom-select:start.root` 是否从 `div.el-input...` 变成 `div.el-select...`。
+2. `custom-select:scopes-after-open.optionCount` 是否接近 1，而不是多个历史弹层。
+3. `custom-select:after-open.optionCount` 是否不再是 3301。
+4. 国籍字段是否优先选择精确 `中国`，而不是 `中国-居民身份证`。
+5. 籍贯字段 `region:group-detected.optionCount` 是否从 6 变成 3。
+6. 意向面试地点是否走 `region:start` / `cascader:*` trace，而不是普通 custom-select trace。
+7. 学校名称如果仍失败，重点看是否有学校 autocomplete 的真实候选出现；如果没有，下一步需要专门做学校远程搜索控件适配。
+
+## 2026-07-04 实施记录：OPPO 地区分段验证误判修复
+
+背景：
+
+- 最新 OPPO debug 中，籍贯三段已经实际填入：
+  - 第一段：`中国`
+  - 第二段：`湖南省`
+  - 第三段：`娄底市`
+- 但报告仍显示 `filled_but_mismatch`。
+- 根因不是执行失败，而是 verifier 把每个子字段都拿来和完整值 `中国 湖南省 娄底市` 比较。
+
+修复：
+
+- `verifyFieldValue()` 对 `cascader-region` 增加 grouped subfield 判断。
+- 如果字段位于同一个 `.el-form-item` / `.ant-form-item` / `fieldset` / `[role=group]`，且该 group 里存在多个地区相关子控件，则允许每个子控件只匹配完整地区值中的一个 token。
+- 普通单控件地区字段仍然必须匹配完整地区值，避免只填 `中国` 就被误认为 `中国 湖南省 娄底市` 已完成。
+
+新增测试：
+
+- grouped region 三个子字段分别为 `中国`、`湖南省`、`娄底市` 时，均可通过 `中国 湖南省 娄底市` 的验证。
+- 单个 region 控件只填 `中国` 时，不能通过完整地区值验证。
+
+验证结果：
+
+- `npm test -- --run tests/lib/sheetkiller/verifier.test.ts` 通过，6 个测试通过。
+- `npm test` 通过，38 个测试文件、279 个测试全部通过。
+- `npm run build` 通过。
+
+预期影响：
+
+- 下一轮 OPPO 中，籍贯三段不应再计入失败。
+- OPPO 剩余主要问题应集中在：
+  - `意向面试地点` 特殊地点选择器。
+  - `学校名称` 远程学校库 autocomplete。
+
+## 2026-07-04 实施记录：复杂远程候选控件先归类为用户处理
+
+背景：
+
+- 最新 OPPO debug 中，剩余失败集中在：
+  - `学校名称`
+  - `意向面试地点`
+- `学校名称` trace 显示没有出现学校候选，只有无关候选 `下载更新删除`。
+- `意向面试地点` trace 显示未打开真实地点候选，只扫到页面导航项。
+
+判断：
+
+- 这两个字段不是普通 input/select 问题，而是复杂远程候选控件。
+- 它们代表一个通用问题类型：远程 autocomplete / 站点候选库 / 特殊地点选择器。
+- 但在 adapter 架构重构前，不应继续用 OPPO 专用补丁硬修，否则会污染当前执行器。
+
+本轮处理：
+
+- executor 增加保守分类：
+  - 学校名称 / 学校全称 / 毕业院校 / 就读学校 / 院校名称。
+  - 意向面试地点 / 面试地点 / 面试城市。
+- 当这些字段的计划策略是 `custom-select` / `select` / `cascader-region` 时，不再尝试自动填写。
+- 报告为 `needs_user_input`，reason 标明：
+  - `复杂远程候选控件：学校名称通常需要从站点学校库候选中手动选择`
+  - `复杂远程候选控件：意向面试地点通常依赖站点远程地点候选或特殊地点选择器`
+- 普通文本字段不受影响，例如纯 `text` 的学校名称仍会自动填写。
+
+新增测试：
+
+- 学校名称 custom-select 会被归类为 `needs_user_input`，不会写 DOM。
+- 意向面试地点 custom-select 会被归类为 `needs_user_input`。
+- 普通 text 学校名称仍然会自动填写。
+
+验证结果：
+
+- `npm test -- --run tests/lib/sheetkiller/executor.test.ts` 通过，6 个测试通过。
+- `npm test` 通过，38 个测试文件、282 个测试全部通过。
+- `npm run build` 通过。
+
+预期影响：
+
+- OPPO 下一轮报告中，这两个字段不应再显示为 `failed_to_fill`。
+- 它们应进入待用户处理/检查列表。
+- 后续 adapter 重构后，再把它们纳入通用 `AutocompleteAdapter` / `RemoteCandidateAdapter`。

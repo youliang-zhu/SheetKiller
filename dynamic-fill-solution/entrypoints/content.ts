@@ -44,6 +44,24 @@ function registerSheetKillerDynamicListener(): () => void {
       }
       return true;
     }
+    if (message?.type === 'SHEETKILLER_MARK_PLANNING_FIELDS') {
+      try {
+        applySheetKillerPlanningHighlights();
+        sendResponse({ ok: true, data: null });
+      } catch (error) {
+        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+    }
+    if (message?.type === 'SHEETKILLER_CLEAR_PLANNING_HIGHLIGHTS') {
+      try {
+        clearSheetKillerPlanningHighlights();
+        sendResponse({ ok: true, data: null });
+      } catch (error) {
+        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+    }
     if (message?.type === 'SHEETKILLER_EXECUTE_PLAN') {
       (async () => {
         const cleanupGuard = installTemporarySubmitGuard(document);
@@ -679,10 +697,35 @@ function paintDraftHighlights(elements: HTMLElement[]): void {
   }
 }
 
+function clearSheetKillerPlanningHighlights(): void {
+  const highlighted = document.querySelectorAll<HTMLElement>(
+    '[data-formpilot-status="sheetkiller-planning"]',
+  );
+  for (const el of highlighted) {
+    el.style.removeProperty('box-shadow');
+    el.style.removeProperty('transition');
+    el.removeAttribute('data-formpilot-status');
+  }
+}
+
+function applySheetKillerPlanningHighlights(): void {
+  clearSheetKillerPlanningHighlights();
+  const fields = scanEnrichedFields(document);
+  for (const field of fields) {
+    if (!field.element || !(field.element instanceof HTMLElement)) continue;
+    if (field.inputType === 'file') continue;
+    const el = field.element;
+    el.style.setProperty('transition', 'box-shadow 180ms ease-out', 'important');
+    setImportantShadow(el, '0 0 0 2px #60a5fa, 0 0 0 6px rgba(96, 165, 250, 0.16)');
+    el.setAttribute('data-formpilot-status', 'sheetkiller-planning');
+  }
+}
+
 function applySheetKillerHighlights(
   reports: SheetKillerReportItem[],
   plan: FillPlanItem[],
 ): void {
+  clearSheetKillerPlanningHighlights();
   const fields = scanEnrichedFields(document);
   const fieldById = new Map(fields.map((field) => [field.fieldId, field]));
   const planById = new Map(plan.map((item) => [item.fieldId, item]));

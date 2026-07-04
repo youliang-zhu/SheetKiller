@@ -1,4 +1,4 @@
-import { fillElement } from '@/lib/engine/heuristic/fillers';
+import { fillElement, type FillTraceStep } from '@/lib/engine/heuristic/fillers';
 import type { FieldInventoryItem, FillPlanItem, SheetKillerReportItem } from '@/lib/sheetkiller/types';
 import { reportFromPlanAndVerification } from '@/lib/sheetkiller/report/report';
 import { isFinalSubmitElement } from '@/lib/sheetkiller/safety/submit-guard';
@@ -15,6 +15,8 @@ export interface DynamicFillDebugItem {
   status: SheetKillerReportItem['status'];
   reason: string;
   exception?: string;
+  interactionTrace?: FillTraceStep[];
+  siteValidationErrors?: string[];
   element?: {
     tagName: string;
     type: string;
@@ -86,6 +88,21 @@ export async function executeFillPlan(
       continue;
     }
 
+    const complexRemoteReason = complexRemoteCandidateReason(field, item);
+    if (complexRemoteReason) {
+      const manualItem: FillPlanItem = {
+        ...item,
+        safety: 'needs_user_input',
+        reviewRequired: true,
+        reason: complexRemoteReason,
+      };
+      const before = readFieldDisplayValue(field);
+      const report = reportFromPlanAndVerification(manualItem, field.label, false);
+      reports.push(report);
+      debugItems.push(buildDebugItem(manualItem, field, report, before, before, ''));
+      continue;
+    }
+
     if (isFinalSubmitElement(field.element)) {
       const report: SheetKillerReportItem = {
         fieldId: field.fieldId,
@@ -114,8 +131,9 @@ export async function executeFillPlan(
     let filled = false;
     const beforeValue = readFieldDisplayValue(field);
     let exception = '';
+    const interactionTrace: FillTraceStep[] = [];
     try {
-      filled = await fillElement(field.element, expectedValue, effectiveItem.strategy);
+      filled = await fillElement(field.element, expectedValue, effectiveItem.strategy, { trace: interactionTrace });
     } catch (err) {
       filled = false;
       exception = err instanceof Error ? err.message : String(err);
@@ -131,7 +149,15 @@ export async function executeFillPlan(
 
     const report = reportFromPlanAndVerification(effectiveItem, field.label, filled, verification);
     reports.push(report);
-    debugItems.push(buildDebugItem(effectiveItem, field, report, beforeValue, afterValue, exception));
+    debugItems.push(buildDebugItem(
+      effectiveItem,
+      field,
+      report,
+      beforeValue,
+      afterValue,
+      exception,
+      interactionTrace,
+    ));
   }
 
   return {
@@ -165,6 +191,30 @@ function adjustedExpectedValue(field: FieldInventoryItem, item: FillPlanItem): s
   return '+86';
 }
 
+function complexRemoteCandidateReason(field: FieldInventoryItem, item: FillPlanItem): string {
+  if (!['custom-select', 'select', 'cascader-region'].includes(item.strategy)) return '';
+  const text = [
+    field.label,
+    field.placeholder,
+    field.ariaLabel,
+    field.name,
+    field.id,
+    field.section,
+    field.context,
+    item.label,
+    item.profileSource,
+    item.sourcePath,
+  ].filter(Boolean).join(' ');
+
+  if (/学校名称|学校全称|毕业院校|就读学校|院校名称|school/i.test(text)) {
+    return '复杂远程候选控件：学校名称通常需要从站点学校库候选中手动选择；当前版本先不自动填写，避免写入无效 DOM 值。';
+  }
+  if (/意向面试地点|面试地点|面试城市|interview\s*(location|city)/i.test(text)) {
+    return '复杂远程候选控件：意向面试地点通常依赖站点远程地点候选或特殊地点选择器；当前版本先交给用户手动选择。';
+  }
+  return '';
+}
+
 function buildDebugItem(
   plan: FillPlanItem,
   field: FieldInventoryItem | undefined,
@@ -172,6 +222,7 @@ function buildDebugItem(
   beforeValue: string,
   afterValue: string,
   exception: string,
+  interactionTrace: FillTraceStep[] = [],
 ): DynamicFillDebugItem {
   const sensitiveType = field?.sensitiveType;
   const expected = plan.expectedValue || plan.value || '';
@@ -186,8 +237,32 @@ function buildDebugItem(
     status: report.status,
     reason: report.reason,
     exception: exception || undefined,
+    interactionTrace: interactionTrace.length > 0 ? interactionTrace : undefined,
+    siteValidationErrors: field ? readSiteValidationErrors(field) : undefined,
     element: field ? snapshotElement(field) : undefined,
   };
+}
+
+function readSiteValidationErrors(field: FieldInventoryItem): string[] | undefined {
+  const root = field.element.closest(
+    '.el-form-item, .ant-form-item, .form-item, .field, .control, label, div',
+  ) ?? field.element.parentElement;
+  if (!root) return undefined;
+  const selectors = [
+    '.el-form-item__error',
+    '.ant-form-item-explain-error',
+    '.ant-form-item-extra',
+    '[class*="error"]',
+    '[class*="invalid"]',
+    '[aria-live="polite"]',
+  ];
+  const errors = selectors
+    .flatMap((selector) => Array.from(root.querySelectorAll(selector)))
+    .map((el) => (el.textContent ?? '').trim().replace(/\s+/g, ' '))
+    .filter(Boolean)
+    .filter((text, index, arr) => arr.indexOf(text) === index)
+    .slice(0, 5);
+  return errors.length > 0 ? errors : undefined;
 }
 
 function snapshotElement(field: FieldInventoryItem): DynamicFillDebugItem['element'] {

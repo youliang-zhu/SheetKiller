@@ -16,7 +16,6 @@ export interface ApiConfig {
 
 type PlannerField = FieldInventoryItem | SerializableFieldInventoryItem;
 
-const MAX_FIELDS_PER_LLM_REQUEST = 35;
 const MAX_OPTIONS_PER_FIELD = 60;
 const MAX_OPTION_TEXT_LENGTH = 120;
 const UNSAFE_SENSITIVE_TYPES = new Set(['password', 'captcha', 'verify_code', 'bank_card', 'upload']);
@@ -468,17 +467,6 @@ export async function planWithLlm(
   apiConfig: ApiConfig,
   fetchImpl: typeof fetch = fetch,
 ): Promise<FillPlanItem[]> {
-  if (fields.length > MAX_FIELDS_PER_LLM_REQUEST) {
-    const chunks: PlannerField[][] = [];
-    for (let i = 0; i < fields.length; i += MAX_FIELDS_PER_LLM_REQUEST) {
-      chunks.push(fields.slice(i, i + MAX_FIELDS_PER_LLM_REQUEST));
-    }
-    const plans: FillPlanItem[] = [];
-    for (const chunk of chunks) {
-      plans.push(...await requestPlanWithLlm(chunk, facts, apiConfig, fetchImpl));
-    }
-    return plans;
-  }
   return requestPlanWithLlm(fields, facts, apiConfig, fetchImpl);
 }
 
